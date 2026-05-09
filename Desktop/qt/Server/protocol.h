@@ -1,0 +1,70 @@
+#ifndef PROTOCOL_H
+#define PROTOCOL_H
+typedef unsigned int uint;
+enum ENUM_MSG_TYPE
+{//消息类型的枚举，用于标识消息的类型
+    //消息类的最小值
+    ENUM_MSG_TYPE_MIN=0,
+    //表示注册请求的信息1
+    ENUM_MSG_TYPE_REGIST_REQUEST,
+    //表示注册响应的信息2
+    ENUM_MSG_TYPE_REGIST_RESPOND,
+    //登录的注册信息3
+    ENUM_MSG_TYPE_LOGIN_REQUEST,
+    //登录的响应信息4
+    ENUM_MSG_TYPE_LOGIN_RESPOND,
+    //查找的请求类型5
+    ENUM_MSG_TYPE_FIND_USER_REQUEST,
+    //查找的响应类型6
+    ENUM_MSG_TYPE_FIND_USER_RESPOND,
+    //在线用户请求类型7
+    ENUM_MSG_TYPE_ONLINE_USER_REQUEST,
+    //在线用户响应类型8
+    ENUM_MSG_TYPE_ONLINE_USER_RESPOND,
+    ENUM_MSG_TYPE_ADD_FRIEND_REQUEST,
+    ENUM_MSG_TYPE_ADD_FRIEND_RESPOND,
+    ENUM_MSG_TYPE_ADD_FRIEND_AGREE_REQUEST,
+    ENUM_MSG_TYPE_ADD_FRIEND_AGREE_RESPOND,
+    ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST,
+    ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND,
+    ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST,
+    ENUM_MSG_TYPE_DELETE_FRIEND_RESPOND,
+    ENUM_MSG_TYPE_CHAT_REQUEST,
+    ENUM_MSG_TYPE_CHAT_RESPOND,
+    ENUM_MSG_TYPE_CREATE_FILE_REQUEST,
+    ENUM_MSG_TYPE_CREATE_FILE_RESPOND,
+    ENUM_MSG_TYPE_FLUSH_FILE_REQUEST,
+    ENUM_MSG_TYPE_FLUSH_FILE_RESPOND,
+    ENUM_MSG_TYPE_DEL_FILE_REQUEST,
+    ENUM_MSG_TYPE_DEL_FILE_RESPOND,
+    ENUM_MSG_TYPE_RENAME_FILE_REQUEST,
+    ENUM_MSG_TYPE_RENAME_FILE_RESPOND,
+    ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST,
+    ENUM_MSG_TYPE_UPLOAD_FILE_INIT_RESPOND,
+    ENUM_MSG_TYPE_UPLOAD_FILE_DATA_REQUEST,
+    ENUM_MSG_TYPE_UPLOAD_FILE_DATA_RESPOND,
+
+
+
+
+    //消息类的最大值
+    ENUM_MSG_TYPE_MAX=9999,
+};
+//创造一个结构体我们进行数据的传输就是传输的结构体
+struct PDU
+{//协议数据单元
+     uint uiTotalLen;    //总长度
+     uint uiMsgLen;      //柔性数组长度(消息长度)
+     uint uiType;        //类型
+    char caData[64];            //参数
+    char caMsg[];               //消息
+
+};
+struct FileInfo{
+    char caName[32];
+    uint uiType;
+};
+PDU*mkPDU(uint uiMsgLen=0);
+
+
+#endif // PROTOCOL_H
