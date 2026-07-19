@@ -173,7 +173,8 @@ PDU *MsgHandler::createFile()
     char caFileName[32]={'\0'};
     memcpy(caFileName,pdu->caData,32);
     QDir dir;
-    bool ret=dir.mkdir(QString("%1/%2").arg(pdu->caMsg).arg(caFileName));
+    //在更换电脑了之后发现其实有一些bug，发现创建文件夹失败，原因是文件夹读取内容时无主即账号目录名导致读取失败，采用mkpath递归构建好一些
+     bool ret = dir.mkpath(QString("%1/%2").arg(pdu->caMsg).arg(caFileName));
     qDebug()<<"ret"<<ret;
     PDU*respdu=mkPDU();
     respdu->uiType=ENUM_MSG_TYPE_CREATE_FILE_RESPOND;

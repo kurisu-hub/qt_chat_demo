@@ -20,7 +20,7 @@ void OperateDB::connect()
     }
     else
     {
-        qDebug()<<"连接失败"<<m_db.lastError().text();
+        qDebug()<<"数据库连接失败"<<m_db.lastError().text();
     }
 
 }
