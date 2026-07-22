@@ -9,7 +9,7 @@
 #include <QProcess>
 
 Client::Client(QWidget *parent)
-    : QMainWindow(parent)
+    : QWidget(parent)
     , ui(new Ui::Client)
 {
     m_prh=new ResHandler();

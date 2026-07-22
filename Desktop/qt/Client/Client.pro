@@ -39,6 +39,7 @@ HEADERS += \
 FORMS += \
     .ui \
     chat.ui \
+    client.ui \
     file.ui \
     friend.ui \
     index.ui \

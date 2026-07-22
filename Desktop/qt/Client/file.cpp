@@ -8,7 +8,9 @@
 #include <QMessageBox>
 File::File(QWidget *parent) :
     QWidget(parent),
+      m_pFileList(),
     ui(new Ui::File)
+
 {
 
     m_strCurPath=m_strUserPath=QString("%1/%2").arg(Client::getInstance().m_strPath).arg(Client::getInstance().m_strLoginName);
@@ -20,34 +22,43 @@ File::File(QWidget *parent) :
 
 File::~File()
 {
+    initFileList();
     delete ui;
 }
 
 void File::updateFileList(QList<FileInfo *> pFileList)
 {
-    foreach(FileInfo*pFileInfo,m_pFileList){
-            delete pFileInfo;
-        }
-    ui->listWidget->clear();
-    m_pFileList=pFileList;
-    foreach(FileInfo*pFileInfo,pFileList){
-       QListWidgetItem*pItem= new QListWidgetItem;
-       if(pFileInfo->uiType==0){
-           pItem->setIcon(QIcon(QPixmap(":/dir.png")));
+    // 如果传进来的就是 m_pFileList 本身，先做一份浅拷贝，避免 initFileList 把它删空
+       QList<FileInfo*> listCopy = pFileList;
+
+       initFileList();          // 这里会 delete 掉 m_pFileList 里的旧对象
+       ui->listWidget->clear();
+
+       foreach (FileInfo* pFileInfo, listCopy) {
+           QListWidgetItem* pItem = new QListWidgetItem;
+           if (pFileInfo->uiType == 0) {
+               pItem->setIcon(QIcon(QPixmap(":/dir.png")));
+           } else if (pFileInfo->uiType == 1) {
+               pItem->setIcon(QIcon(QPixmap(":/file.png")));
+           }
+           pItem->setText(pFileInfo->caName);
+           ui->listWidget->addItem(pItem);
        }
-       else if(pFileInfo->uiType==1){
-           pItem->setIcon(QIcon(QPixmap(":/file.png")));
-       }
-       pItem->setText(pFileInfo->caName);
-       qDebug()<<"updateFileList pFileInfo->caName"<<pFileInfo->caName;
-       ui->listWidget->addItem(pItem);
-    }
+
+       m_pFileList = listCopy;
 }
 
 void File::flushFile_LW(QList<FileInfo *> pFileList)
 {
+    qDebug()<<"数量:"<<pFileList.size();
+
+    foreach(FileInfo*p,pFileList)
+    {
+        qDebug()<<p<<"名字"<<p->caName;
+    }
     ui->listWidget->clear();
     updateFileList(pFileList);
+
 }
 
 void File::flushFile()
@@ -76,6 +87,19 @@ void File::UploadFile()
         pdu->uiTotalLen=ret+sizeof(PDU);
         Client::getInstance().sendMsg(pdu);
     }
+    file.close();
+}
+
+void File::initFileList()
+{
+    foreach(FileInfo* pFileInfo,m_pFileList)
+    {
+        if(pFileInfo)
+        {
+            delete pFileInfo;
+        }
+    }
+    m_pFileList.clear();
 }
 
 
@@ -89,7 +113,9 @@ void File::on_mkDir_PB_clicked()
         return;
     }
     PDU*pdu=mkPDU(m_strCurPath.toStdString().size()+1);
-    memcpy(pdu->caData,strFileName.toStdString().c_str(),32);
+    char caName[32] = {0};
+    strncpy(caName, strFileName.toStdString().c_str(), sizeof(caName) - 1);
+    memcpy(pdu->caData, caName, 32);
     memcpy(pdu->caMsg,m_strCurPath.toStdString().c_str(),m_strCurPath.toStdString().size());
     pdu->uiType=ENUM_MSG_TYPE_CREATE_FILE_REQUEST;
     Client::getInstance().sendMsg(pdu);
@@ -138,8 +164,11 @@ void File::on_rename_PB_clicked()
      QString oldPath=QString("%1/%2").arg(this->m_strCurPath).arg(pItem->text());
      QString newPath=QString("%1/%2").arg(this->m_strCurPath).arg(strFileName);
      PDU*pdu=mkPDU();
-     memcpy(pdu->caData,oldPath.toStdString().c_str(),32);
-     memcpy(pdu->caData+32,newPath.toStdString().c_str(),32);
+     char caOld[32] = {0}, caNew[32] = {0};
+     strncpy(caOld, oldPath.toStdString().c_str(), sizeof(caOld) - 1);
+     strncpy(caNew, newPath.toStdString().c_str(), sizeof(caNew) - 1);
+     memcpy(pdu->caData, caOld, 32);
+     memcpy(pdu->caData + 32, caNew, 32);
      pdu->uiType=ENUM_MSG_TYPE_RENAME_FILE_REQUEST;
      Client::getInstance().sendMsg(pdu);
 }
@@ -165,18 +194,28 @@ void File::on_return_PB_clicked()
 
 void File::on_upload_PB_clicked()
 {
-    m_strUploadPath=QFileDialog::getOpenFileName();
-    qDebug()<<"m_strUploadPath"<<m_strUploadPath;
-    int index=m_strUploadPath.lastIndexOf('/');
-    qDebug()<<"index"<<index;
-    QString strFileName=m_strUploadPath.right(m_strUploadPath.size()-index-1);
-    QFile file(m_strUploadPath);
-    qint64 iFileSize=file.size();
-    qDebug()<<"strFileName:"<<strFileName;
-    PDU*pdu=mkPDU(m_strCurPath.toStdString().size()+1);
-    memcpy(pdu->caData,strFileName.toStdString().c_str(),strFileName.toStdString().size());
-    memcpy(pdu->caData+32,&iFileSize,sizeof(qint64));
-    memcpy(pdu->caMsg,m_strCurPath.toStdString().c_str(),m_strUploadPath.toStdString().size());
-    pdu->uiType=ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST;
-    Client::getInstance().sendMsg(pdu);
+    m_strUploadPath = QFileDialog::getOpenFileName();
+       if (m_strUploadPath.isEmpty()) return;   // 用户取消选择时直接返回
+
+       qDebug() << "m_strUploadPath" << m_strUploadPath;
+       QFile file(m_strUploadPath);
+       qint64 iFileSize = file.size();
+
+       std::string strCurPath = m_strCurPath.toStdString();
+       QString strFileName = QFileInfo(m_strUploadPath).fileName(); // 只要文件名，不要整个本地路径
+       std::string strFileNameStd = strFileName.toStdString();
+
+       PDU* pdu = mkPDU(strCurPath.size() + 1);
+
+       // caData 前32字节放文件名，清零后再拷贝，防止越界读
+       char caFileName[32] = {0};
+       strncpy(caFileName, strFileNameStd.c_str(), sizeof(caFileName) - 1);
+       memcpy(pdu->caData, caFileName, 32);
+       memcpy(pdu->caData + 32, &iFileSize, sizeof(qint64));
+
+       // caMsg 拷贝 m_strCurPath，长度用它自己的长度，不要用 m_strUploadPath 的
+       memcpy(pdu->caMsg, strCurPath.c_str(), strCurPath.size());
+
+       pdu->uiType = ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST;
+       Client::getInstance().sendMsg(pdu);
 }

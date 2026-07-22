@@ -25,7 +25,7 @@ public:
     void flushFile_LW(QList<FileInfo*>pFileList);
     void flushFile();
     void UploadFile();
-
+    void initFileList();
 private slots:
     void on_mkDir_PB_clicked();
 

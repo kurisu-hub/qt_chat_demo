@@ -13,7 +13,7 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class Client; }
 QT_END_NAMESPACE
 
-class Client : public QMainWindow
+class Client : public  QWidget
 {   //信号槽
     Q_OBJECT
 
