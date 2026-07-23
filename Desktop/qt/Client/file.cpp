@@ -17,6 +17,7 @@ File::File(QWidget *parent) :
     qDebug()<<"1:"<<m_strCurPath<<"2:"<<m_strUserPath;
     ui->setupUi(this);
     flushFile();
+      m_pShareFile=new ShareFile;
     qDebug()<<"file构造函数";
 }
 
@@ -218,4 +219,53 @@ void File::on_upload_PB_clicked()
 
        pdu->uiType = ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST;
        Client::getInstance().sendMsg(pdu);
+}
+
+void File::on_download_PB_clicked()
+{
+    QListWidgetItem* pItem=ui->listWidget->currentItem();
+
+        if(!pItem)
+        {
+            return;
+        }
+
+
+        QString strFilePath=
+                QString("%1/%2")
+                .arg(m_strCurPath)
+                .arg(pItem->text());
+
+
+        PDU*pdu=mkPDU(strFilePath.toStdString().size()+1);
+
+
+        memcpy(pdu->caMsg,
+               strFilePath.toStdString().c_str(),
+               strFilePath.toStdString().size());
+
+
+        pdu->uiType=
+            ENUM_MSG_TYPE_DOWNLOAD_FILE_REQUEST;
+
+
+        Client::getInstance().sendMsg(pdu);
+
+}
+
+void File::on_share_PB_clicked()
+{
+
+   QListWidgetItem*pItem=ui->listWidget->currentItem();
+   if(!pItem)
+   {
+       return ;
+   }
+   m_pShareFile->m_strFileName=pItem->text();
+   m_pShareFile->updateLW();
+   if(m_pShareFile->isHidden())
+   {
+       m_pShareFile->show();
+
+   }
 }

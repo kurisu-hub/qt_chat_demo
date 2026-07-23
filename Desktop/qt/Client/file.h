@@ -2,7 +2,9 @@
 #define FILE_H
 
 #include "protocol.h"
+#include "sharefile.h"
 
+#include <QFile>
 #include <QListWidget>
 #include <QWidget>
 
@@ -15,10 +17,15 @@ class File : public QWidget
     Q_OBJECT
 
 public:
+    //用户的路径
     QString m_strUserPath;
+    //当前浏览的路径
     QString m_strCurPath;
     QList<FileInfo*>m_pFileList;
     QString m_strUploadPath;
+    QFile m_fUploadfile;
+    QFile m_fDownloadfile;
+    ShareFile *m_pShareFile;
     explicit File(QWidget *parent = nullptr);
     ~File();
     void updateFileList(QList<FileInfo*> pFileList);
@@ -41,6 +48,10 @@ private slots:
     void on_return_PB_clicked();
 
     void on_upload_PB_clicked();
+
+    void on_download_PB_clicked();
+
+    void on_share_PB_clicked();
 
 private:
     Ui::File *ui;

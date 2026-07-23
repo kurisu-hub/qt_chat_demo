@@ -20,6 +20,7 @@ public:
     void flushFriend_LW(QStringList friendList);
     void flushfriend();
     explicit Friend(QWidget *parent = nullptr);
+    QListWidget* getFriend_LW();
     Chat*m_pChat;
 private slots:
     void on_findUser_PB_clicked();

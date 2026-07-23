@@ -15,6 +15,7 @@ public:
     QFile m_fUploadFile;
     qint64 m_iUploadFileSize;
     qint64 m_iUploadReceivedSize;
+    QFile m_fDownloadFile;
     PDU *pdu;
     PDU *regist();
     PDU *login(QString&strName);
@@ -31,6 +32,10 @@ public:
     PDU*renameFile();
     PDU*uploadFileInit();
     PDU*uploadFileData();
+    PDU*downloadFile();
+    PDU*downloadFileData();
+    PDU*shareFile();
+    PDU*shareFileAgree();
 };
 
 #endif // MSGHANDLER_H

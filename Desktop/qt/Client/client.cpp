@@ -115,6 +115,33 @@ void Client::handleMsg(PDU *pdu)
         Index::getInstance().getFile()->flushFile();
         break;
     }
+    case ENUM_MSG_TYPE_DOWNLOAD_FILE_RESPOND:
+    {
+        m_prh->downfile();
+        break;
+    }
+
+
+    case ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_RESPOND:
+    {
+        m_prh->downloadFileData();
+        break;
+    }
+    case ENUM_MSG_TYPE_DOWNLOAD_FILE_FINISH_RESPOND:
+    {
+        m_prh->downloadFileFinish();
+        break;
+    }
+    case ENUM_MSG_TYPE_SHARE_FILE_REQUEST:
+    {
+        m_prh->shareFileResend();
+        break;
+    }
+    case ENUM_MSG_TYPE_SHARE_FILE_RESPOND:
+    {
+        m_prh->shareFileAgree();
+        break;
+    }
      default:
         break;
     }

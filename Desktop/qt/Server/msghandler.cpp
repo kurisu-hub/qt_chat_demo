@@ -278,4 +278,116 @@ PDU *MsgHandler::uploadFileData()
     return respdu;
 }
 
+PDU *MsgHandler::downloadFile()
+{
+    char caPath[128]={0};
+
+      memcpy(caPath,
+             pdu->caMsg,
+             pdu->uiMsgLen);
+      m_fDownloadFile.setFileName(caPath);
+
+
+      bool ret =
+      m_fDownloadFile.open(QIODevice::ReadOnly);
+
+
+
+      PDU*respdu=mkPDU();
+
+
+      memcpy(respdu->caData,
+             &ret,
+             sizeof(bool));
+
+
+      respdu->uiType=
+      ENUM_MSG_TYPE_DOWNLOAD_FILE_RESPOND;
+
+
+
+      return respdu;
+}
+
+PDU *MsgHandler::downloadFileData()
+{
+    PDU*respdu =
+       mkPDU(4096);
+
+
+
+       qint64 ret =
+       m_fDownloadFile.read(
+               respdu->caMsg,
+               4096);
+
+
+
+       if(ret<=0)
+       {
+
+           m_fDownloadFile.close();
+
+
+           PDU*respdu=mkPDU();
+
+
+           respdu->uiType=
+           ENUM_MSG_TYPE_DOWNLOAD_FILE_FINISH_RESPOND;
+
+
+           return respdu;
+       }
+
+
+
+       respdu->uiMsgLen=ret;
+
+
+       respdu->uiType=
+       ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_RESPOND;
+
+
+
+       return respdu;
+}
+
+PDU *MsgHandler::shareFile()
+{
+    char strCurName[32]={'\0'};
+    int iFriendSize=0;
+    memcpy(strCurName,pdu->caData,32);
+    memcpy(&iFriendSize,pdu->caData+32,32);
+    PDU*resendpdu=mkPDU(pdu->uiMsgLen-iFriendSize*32);
+    resendpdu->uiType=pdu->uiType;
+    memcpy(resendpdu->caData,strCurName,32);
+    memcpy(resendpdu->caMsg,pdu->caMsg+iFriendSize*32,pdu->uiMsgLen-iFriendSize*32);
+    char caTmp[32]={'\0'};
+    for(int i=0;i<iFriendSize;i++)
+    {
+        memcpy(caTmp,pdu->caMsg+i*32,32);
+        MyTcpServer::getInstance().resend(caTmp,resendpdu);
+
+    }
+    free(resendpdu);
+    resendpdu=nullptr;
+    PDU*respdu=mkPDU();
+    respdu->uiType=ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
+    return respdu;
+
+}
+
+PDU *MsgHandler::shareFileAgree()
+{
+    QString strShareFilePath=pdu->caMsg;
+    int index=strShareFilePath.lastIndexOf('/');
+    QString strFileName=strShareFilePath.right(strShareFilePath.size()-index-1);
+    QString strTarPath=QString("%1/%2/%3").arg(Server::getInstance().m_strRootPath).arg(pdu->caData).arg(strFileName);
+    bool ret=QFile::copy(strShareFilePath,strTarPath);
+    PDU*respdu=mkPDU();
+    respdu->uiType=ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
+    memcpy(respdu->caData,&ret,sizeof(bool));
+    return respdu;
+}
+
 

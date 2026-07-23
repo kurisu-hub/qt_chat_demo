@@ -27,6 +27,11 @@ public:
     void renameFile();
     void uploadFileInit();
     ResHandler();
+    void downfile();
+    void downloadFileData();
+    void downloadFileFinish();
+    void shareFileResend();
+    void shareFileAgree();
 };
 
 #endif // RESHANDLER_H

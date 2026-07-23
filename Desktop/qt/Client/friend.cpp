@@ -16,6 +16,11 @@ Friend::Friend(QWidget *parent) :
 
 }
 
+QListWidget *Friend::getFriend_LW()
+{
+     return ui->listwidget;
+}
+
 Friend::~Friend()
 {
     delete ui;
@@ -25,8 +30,8 @@ Friend::~Friend()
 //用于刷新好友列表的，传参为好友数组
 void Friend::flushFriend_LW(QStringList friendList)
 {
-    ui->listWidget->clear();
-    ui->listWidget->addItems(friendList);
+    ui->listwidget->clear();
+    ui->listwidget->addItems(friendList);
 }
 
 void Friend::flushfriend()
@@ -74,7 +79,8 @@ void Friend::on_flush_PB_clicked()
 
 void Friend::on_del_PB_clicked()
 {
-    QListWidgetItem* pItem = ui->listWidget->currentItem();
+
+    QListWidgetItem* pItem = ui->listwidget->currentItem();
     if(!pItem){
         return;
     }
@@ -88,7 +94,7 @@ void Friend::on_del_PB_clicked()
 
 void Friend::on_chat_PB_clicked()
 {
-    QListWidgetItem* pItem = ui->listWidget->currentItem();
+    QListWidgetItem* pItem = ui->listwidget->currentItem();
     if(!pItem){
         return;
     }
