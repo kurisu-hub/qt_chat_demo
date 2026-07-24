@@ -354,40 +354,102 @@ PDU *MsgHandler::downloadFileData()
 
 PDU *MsgHandler::shareFile()
 {
-    char strCurName[32]={'\0'};
-    int iFriendSize=0;
-    memcpy(strCurName,pdu->caData,32);
-    memcpy(&iFriendSize,pdu->caData+32,32);
-    PDU*resendpdu=mkPDU(pdu->uiMsgLen-iFriendSize*32);
-    resendpdu->uiType=pdu->uiType;
-    memcpy(resendpdu->caData,strCurName,32);
-    memcpy(resendpdu->caMsg,pdu->caMsg+iFriendSize*32,pdu->uiMsgLen-iFriendSize*32);
-    char caTmp[32]={'\0'};
-    for(int i=0;i<iFriendSize;i++)
-    {
-        memcpy(caTmp,pdu->caMsg+i*32,32);
-        MyTcpServer::getInstance().resend(caTmp,resendpdu);
+    char strSendName[32] = {'\0'};
+        int iFriendSize = 0;
+        memcpy(strSendName, pdu->caData, 32);
+        memcpy(&iFriendSize, pdu->caData + 32, sizeof(int));
 
-    }
-    free(resendpdu);
-    resendpdu=nullptr;
-    PDU*respdu=mkPDU();
-    respdu->uiType=ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
-    return respdu;
+        //提取文件路径：caMsg偏移 iFriendSize*32 之后才是路径
+        char* pFilePath = pdu->caMsg + 32 * iFriendSize;
+        qDebug() << "收到分享请求，发送者：" << strSendName
+                 << " 好友数：" << iFriendSize
+                 << " 文件路径：" << pFilePath;
 
+        //构造转发用的PDU：caMsg只留路径，caData只留发送者
+        int pathLen = strlen(pFilePath) + 1;
+        PDU* resendpdu = mkPDU(pathLen);
+        resendpdu->uiType = pdu->uiType;
+        memset(resendpdu->caData, 0, 64);
+        memcpy(resendpdu->caData, strSendName, 32);
+        memcpy(resendpdu->caMsg, pFilePath, pathLen);
+
+        //循环给每个好友转发
+        char caTmp[32] = {'\0'};
+        for(int i=0; i<iFriendSize; i++)
+        {
+            memset(caTmp, 0, 32);
+            memcpy(caTmp, pdu->caMsg + i*32, 32);
+            MyTcpServer::getInstance().resend(caTmp, resendpdu);
+        }
+
+        free(resendpdu);
+        return nullptr;
 }
 
 PDU *MsgHandler::shareFileAgree()
 {
-    QString strShareFilePath=pdu->caMsg;
-    int index=strShareFilePath.lastIndexOf('/');
-    QString strFileName=strShareFilePath.right(strShareFilePath.size()-index-1);
-    QString strTarPath=QString("%1/%2/%3").arg(Server::getInstance().m_strRootPath).arg(pdu->caData).arg(strFileName);
-    bool ret=QFile::copy(strShareFilePath,strTarPath);
-    PDU*respdu=mkPDU();
-    respdu->uiType=ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
-    memcpy(respdu->caData,&ret,sizeof(bool));
-    return respdu;
+    // 解析接收方发来的RESPOND包，严格对齐客户端写入位置
+       char receiver[32] = {0};
+       memcpy(receiver, pdu->caData, 32);
+       int iAcceptFlag = 0;
+       // 从caData第32字节开始读int类型的同意标记，和客户端写入位置完全对应
+       memcpy(&iAcceptFlag, pdu->caData + 32, sizeof(int));
+       QString srcPath = QString(pdu->caMsg);
+
+       qDebug()<<"接收方:"<<receiver<<" 是否同意:"<<(iAcceptFlag == 1 ? "是" : "否")<<" 源路径:"<<srcPath;
+
+       //提取发送者用户名
+       QString rootPath = Server::getInstance().m_strRootPath;
+       QString relativePath = srcPath.mid(rootPath.size() + 1);
+       QString senderName = relativePath.section('/', 0, 0);
+
+       if(senderName.isEmpty())
+       {
+           qDebug()<<"错误：无法提取发送者用户名";
+           return nullptr;
+       }
+       qDebug()<<"本次分享发起者："<<senderName;
+
+       bool copyRet = false;
+       //只有标记为1才执行文件拷贝
+       if(iAcceptFlag == 1)
+       {
+           QString fileName = srcPath.section('/', -1);
+           QString dstPath = QString("%1/%2/%3")
+                   .arg(rootPath)
+                   .arg(receiver)
+                   .arg(fileName);
+
+           // 同名文件自动覆盖
+           if(QFile::exists(dstPath))
+           {
+               QFile::remove(dstPath);
+           }
+           copyRet = QFile::copy(srcPath, dstPath);
+           qDebug()<<"copy from:"<<srcPath;
+           qDebug()<<"copy to:"<<dstPath;
+           qDebug()<<"copy result:"<<copyRet;
+       }
+       else
+       {
+           qDebug()<<"对方拒绝接收文件，不拷贝";
+           copyRet = false;
+       }
+
+
+       PDU* respdu = mkPDU();
+       respdu->uiType = ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
+       memset(respdu->caData, 0, 64);
+       memcpy(respdu->caData, &copyRet, sizeof(bool));
+
+       // char数组传参，解决类型匹配问题
+       char szSender[32] = {0};
+       std::string tempStr = senderName.toStdString();
+       strncpy(szSender, tempStr.c_str(), 31);
+       MyTcpServer::getInstance().resend(szSender, respdu);
+
+       free(respdu);
+       return nullptr;
 }
 
 

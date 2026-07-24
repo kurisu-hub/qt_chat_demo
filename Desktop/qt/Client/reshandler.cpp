@@ -324,21 +324,37 @@ void ResHandler::downloadFileFinish()
 
 void ResHandler::shareFileResend()
 {
-    QString strSharePath=QString(pdu->caMsg);
-    int index=strSharePath.lastIndexOf('/');
-    QString strFileName=strSharePath.right(strSharePath.size()-index-1);
-    QString strMsg=QString("%1分享文件：%2\n是否接受？").arg(pdu->caData).arg(strFileName);
-    int ret=QMessageBox::question(&Index::getInstance(),"分享文件",strMsg);
-    if(ret!=QMessageBox::Yes)
-    {
-        return;
-    }
-    PDU*respdu=mkPDU(pdu->uiMsgLen);
-    respdu->uiType=ENUM_MSG_TYPE_SHARE_FILE_REQUEST;
-    mempcpy(respdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);
-    memcpy(respdu->caMsg,pdu->caMsg,pdu->uiMsgLen);
-    Client::getInstance().sendMsg(respdu);
+    char strSendName[32] = {'\0'};
+    memcpy(strSendName, pdu->caData, 32);
+    QString strSharePath = QString(pdu->caMsg);
 
+    //从路径提取纯文件名
+    int index = strSharePath.lastIndexOf('/');
+    QString strFileName = strSharePath.right(strSharePath.size() - index - 1);
+
+    //弹窗确认
+    QString strMsg = QString("%1分享文件：%2\n是否接受？").arg(strSendName).arg(strFileName);
+    int ret = QMessageBox::question(&Index::getInstance(), "分享文件", strMsg);
+    // 同意标记用int：1=接受 0=拒绝，固定4字节，无歧义
+    int iAcceptFlag = (ret == QMessageBox::Yes) ? 1 : 0;
+
+    //构造并发送 SHARE_FILE_RESPOND 响应包
+    std::string stdPath = strSharePath.toStdString();
+    PDU* respdu = mkPDU(stdPath.size() + 1);
+    respdu->uiType = ENUM_MSG_TYPE_SHARE_FILE_RESPOND;
+
+    // caData 整体清零
+    memset(respdu->caData, 0, 64);
+    // 0~31字节：接收者（当前用户）用户名
+    std::string strMyName = Client::getInstance().m_strLoginName.toStdString();
+    memcpy(respdu->caData, strMyName.c_str(), std::min((size_t)31, strMyName.size()));
+    // 32~35字节：int类型同意标记，固定4字节，和服务器读取位置严格对齐
+    memcpy(respdu->caData + 32, &iAcceptFlag, sizeof(int));
+
+    // caMsg：原文件完整路径（带结束符）
+    memcpy(respdu->caMsg, stdPath.c_str(), stdPath.size() + 1);
+
+    Client::getInstance().sendMsg(respdu);
 
 }
 

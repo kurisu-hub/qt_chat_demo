@@ -115,6 +115,12 @@ PDU *MyTcpSocket::handleMsg(PDU *pdu)
     case ENUM_MSG_TYPE_SHARE_FILE_REQUEST:
     {
         respdu=m_pmh->shareFile();
+        break;
+    }
+    case ENUM_MSG_TYPE_SHARE_FILE_RESPOND:
+    {
+        respdu=m_pmh->shareFileAgree();
+        break;
     }
     default:
         break;
