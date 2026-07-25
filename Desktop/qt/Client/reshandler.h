@@ -32,6 +32,8 @@ public:
     void downloadFileFinish();
     void shareFileResend();
     void shareFileAgree();
+    void friendPresenceSnapshot();
+    void friendPresenceNotify();
 };
 
 #endif // RESHANDLER_H

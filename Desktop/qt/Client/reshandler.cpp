@@ -31,6 +31,9 @@ void ResHandler::login()
         Index::getInstance().show();
         //隐藏登录界面
         Client::getInstance().hide();
+        //登录成功后启动心跳检测
+        Client::getInstance().startHeartbeat();
+        Client::getInstance().requestFriendPresenceSnapshot();
     }
     else
     {
@@ -38,6 +41,26 @@ void ResHandler::login()
     }
 }
 
+
+void ResHandler::friendPresenceSnapshot()
+{
+    QStringList onlineFriends;
+    const int count = pdu->uiMsgLen / 32;
+    for (int i = 0; i < count; ++i) {
+        char name[32] = {0};
+        memcpy(name, pdu->caMsg + i * 32, 32);
+        onlineFriends.append(QString::fromUtf8(name));
+    }
+    Index::getInstance().getFriend()->applyPresenceSnapshot(onlineFriends);
+}
+
+void ResHandler::friendPresenceNotify()
+{
+    char name[32] = {0};
+    memcpy(name, pdu->caData, 32);
+    const bool online = pdu->uiType == ENUM_MSG_TYPE_FRIEND_ONLINE_NOTIFY;
+    Index::getInstance().getFriend()->updateFriendPresence(QString::fromUtf8(name), online);
+}
 
 void ResHandler::findUser()
 {

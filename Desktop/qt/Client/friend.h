@@ -5,6 +5,7 @@
 #include "onlineuser.h"
 
 #include <QWidget>
+#include <QSet>
 
 namespace Ui {
 class Friend;
@@ -19,6 +20,8 @@ public:
     OnlineUser* m_pOnlineUser;
     void flushFriend_LW(QStringList friendList);
     void flushfriend();
+    void applyPresenceSnapshot(const QStringList &onlineFriends);
+    void updateFriendPresence(const QString &friendName, bool online);
     explicit Friend(QWidget *parent = nullptr);
     QListWidget* getFriend_LW();
     Chat*m_pChat;
@@ -35,6 +38,8 @@ private slots:
 
 private:
     Ui::Friend *ui;
+    QSet<QString> m_onlineFriends;
+    void refreshFriendItem(QListWidgetItem *item);
 };
 
 #endif // FRIEND_H

@@ -21,6 +21,7 @@ SOURCES += \
     mytcpserver.cpp \
     mytcpsocket.cpp \
     operatedb.cpp \
+    presencestore.cpp \
     protocol.cpp \
     server.cpp
 
@@ -29,6 +30,7 @@ HEADERS += \
     mytcpserver.h \
     mytcpsocket.h \
     operatedb.h \
+    presencestore.h \
     protocol.h \
     server.h
 

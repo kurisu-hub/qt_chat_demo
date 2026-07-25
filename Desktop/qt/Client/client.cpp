@@ -20,6 +20,10 @@ Client::Client(QWidget *parent)
     //用connect函数来进行信号槽连接，当socket函数发出信号时会调用showConnect函数
     connect(&socket,&QTcpSocket::connected,this,&Client::showConnect);
     connect(&socket,&QTcpSocket::readyRead,this,&Client::recvMsg);
+
+    //初始化心跳定时器
+    m_pHeartbeatTimer = new QTimer(this);
+    connect(m_pHeartbeatTimer, &QTimer::timeout, this, &Client::sendHeartbeat);
 }
 
 Client::~Client()
@@ -140,6 +144,22 @@ void Client::handleMsg(PDU *pdu)
     case ENUM_MSG_TYPE_SHARE_FILE_RESPOND:
     {
         m_prh->shareFileAgree();
+        break;
+    }
+    case ENUM_MSG_TYPE_HEARTBEAT_RESPOND:
+    {
+        qDebug()<<"收到服务器心跳响应";
+        break;
+    }
+    case ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_RESPOND:
+    {
+        m_prh->friendPresenceSnapshot();
+        break;
+    }
+    case ENUM_MSG_TYPE_FRIEND_ONLINE_NOTIFY:
+    case ENUM_MSG_TYPE_FRIEND_OFFLINE_NOTIFY:
+    {
+        m_prh->friendPresenceNotify();
         break;
     }
      default:
@@ -264,4 +284,27 @@ void Client::on_login_PB_clicked()
     qDebug()<<"send login uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
     free(pdu);
     pdu=NULL;
+}
+
+void Client::startHeartbeat()
+{
+    //每30秒发送一次心跳
+    m_pHeartbeatTimer->start(30000);
+    qDebug()<<"心跳定时器已启动";
+}
+
+void Client::sendHeartbeat()
+{
+    PDU* pdu = mkPDU();
+    pdu->uiType = ENUM_MSG_TYPE_HEARTBEAT_REQUEST;
+    memcpy(pdu->caData, m_strLoginName.toStdString().c_str(), 32);
+    sendMsg(pdu);
+    qDebug()<<"发送心跳包";
+}
+
+void Client::requestFriendPresenceSnapshot()
+{
+    PDU *pdu = mkPDU();
+    pdu->uiType = ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_REQUEST;
+    sendMsg(pdu);
 }

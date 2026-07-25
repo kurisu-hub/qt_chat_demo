@@ -75,6 +75,8 @@ bool OperateDB::handleLogin(char *caName, char *caPwd)
     {
         return false;
     }
+    // Online state belongs to PresenceStore, never to MySQL.
+    return true;
     sql=QString("update user_info set online=1 where name='%1'").arg(caName);
     qDebug()<<"将onlin设置为1"<<sql;
     return q.exec(sql);
@@ -85,6 +87,8 @@ void OperateDB::handleOffline(const char *caName)
     {
         return;
     }
+    // Kept for source compatibility. PresenceStore owns transient state.
+    return;
     QString sql=QString("update user_info set online=0 where name='%1'").arg(caName);
     QSqlQuery q;
     q.exec(sql);
@@ -96,7 +100,7 @@ int OperateDB::handleFindUser(const char *caName)
     {
         return -1;
     }
-    QString sql=QString("select online from user_info where name='%1'").arg(caName);
+    QString sql=QString("select id from user_info where name='%1'").arg(caName);
     qDebug()<<"查询字段online字段sql"<<sql;
     QSqlQuery q;
     q.exec(sql);
@@ -145,7 +149,7 @@ int OperateDB::handleAddFriend(char *caCurName, char *caTarName)
     if(q.next()){
         return -2;
     }
-    sql=QString("select online from user_info where name='%1'").arg(caTarName);
+    sql=QString("select id from user_info where name='%1'").arg(caTarName);
     q.exec(sql);
     if(q.next()){
         return q.value(0).toInt();
@@ -184,7 +188,7 @@ QStringList OperateDB::handleFlushFriend(char *caName)
                                union
                                select friend_id from friend where user_id=
                                (select id from user_info where name='%1')
-                                 )and online =1;
+                                 );
                          )").arg(caName);
     QSqlQuery q;
     q.exec(sql);

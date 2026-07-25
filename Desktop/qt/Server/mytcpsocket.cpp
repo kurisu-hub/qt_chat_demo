@@ -1,12 +1,17 @@
 #include "mytcpsocket.h"
 #include "protocol.h"
 #include "operatedb.h"
+#include "mytcpserver.h"
+#include "presencestore.h"
+#include <QUuid>
 MyTcpSocket::MyTcpSocket()
 {
 
     connect(this,&QTcpSocket::readyRead,this,&MyTcpSocket::recvMsg);
     connect(this,&QTcpSocket::disconnected,this,&MyTcpSocket::clientOffline);
     m_pmh=new MsgHandler;
+    //初始化最后活跃时间
+    m_lastActiveTime = QDateTime::currentDateTime();
 }
 
 PDU *MyTcpSocket::readMsg()
@@ -35,6 +40,16 @@ PDU *MyTcpSocket::handleMsg(PDU *pdu)
     case ENUM_MSG_TYPE_LOGIN_REQUEST:
     {
         respdu=m_pmh->login(m_strLoginName);
+        bool loginOk = false;
+        memcpy(&loginOk, respdu->caData, sizeof(bool));
+        if (loginOk) {
+            m_sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            m_authenticated = true;
+            m_offlineHandled = false;
+            if (PresenceStore::getInstance().login(m_strLoginName, m_sessionId)) {
+                MyTcpServer::getInstance().notifyFriendsPresence(m_strLoginName, true, 0);
+            }
+        }
         break;
     }
     case ENUM_MSG_TYPE_FIND_USER_REQUEST:
@@ -45,6 +60,24 @@ PDU *MyTcpSocket::handleMsg(PDU *pdu)
     case ENUM_MSG_TYPE_ONLINE_USER_REQUEST:
     {
         respdu=m_pmh->onlineUser();
+        break;
+    }
+    case ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_REQUEST:
+    {
+        QByteArray owner = m_strLoginName.toUtf8();
+        char ownerName[32] = {0};
+        memcpy(ownerName, owner.constData(), qMin(owner.size(), 31));
+        const QStringList friends = OperateDB::getInstance().handleFlushFriend(ownerName);
+        QStringList onlineFriends;
+        for (const QString &friendName : friends) {
+            if (PresenceStore::getInstance().isOnline(friendName)) onlineFriends.append(friendName);
+        }
+        respdu = mkPDU(onlineFriends.size() * 32);
+        respdu->uiType = ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_RESPOND;
+        for (int i = 0; i < onlineFriends.size(); ++i) {
+            QByteArray name = onlineFriends.at(i).toUtf8();
+            memcpy(respdu->caMsg + i * 32, name.constData(), qMin(name.size(), 31));
+        }
         break;
     }
     case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:
@@ -122,6 +155,16 @@ PDU *MyTcpSocket::handleMsg(PDU *pdu)
         respdu=m_pmh->shareFileAgree();
         break;
     }
+    case ENUM_MSG_TYPE_HEARTBEAT_REQUEST:
+    {
+        //收到心跳请求，更新活跃时间并响应
+        updateActiveTime();
+        PresenceStore::getInstance().heartbeat(m_strLoginName, m_sessionId);
+        respdu = mkPDU();
+        respdu->uiType = ENUM_MSG_TYPE_HEARTBEAT_RESPOND;
+        qDebug()<<"收到用户"<<m_strLoginName<<"的心跳包";
+        break;
+    }
     default:
         break;
 }
@@ -144,6 +187,7 @@ void MyTcpSocket::recvMsg()
         if(buffer.size()<int(sizeof(PDU))){
             break;
         }
+        updateActiveTime();
         PDU*respdu=handleMsg(pdu);
         sendMsg(respdu);
         buffer.remove(0,pdu->uiTotalLen);
@@ -154,7 +198,8 @@ void MyTcpSocket::recvMsg()
 
 void MyTcpSocket::clientOffline()
 {
-    OperateDB::getInstance().handleOffline(m_strLoginName.toStdString().c_str());
+    MyTcpServer::getInstance().userOffline(this, 0);
+    MyTcpServer::getInstance().removeSocket(this);
 }
 
 void MyTcpSocket::sendMsg(PDU *pdu)
@@ -163,5 +208,17 @@ void MyTcpSocket::sendMsg(PDU *pdu)
     }
     this->write((char*)pdu,pdu->uiTotalLen);
     qDebug()<<"send uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
+}
+
+void MyTcpSocket::updateActiveTime()
+{
+    m_lastActiveTime = QDateTime::currentDateTime();
+}
+
+bool MyTcpSocket::isTimeout()
+{
+    //超过90秒没有活动则认为超时
+    qint64 seconds = m_lastActiveTime.secsTo(QDateTime::currentDateTime());
+    return seconds > 90;
 }
 

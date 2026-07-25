@@ -6,6 +6,7 @@
 #include "reshandler.h"
 
 #include <QMainWindow>
+#include <QTimer>
 //包含QTcpSocket
 #include <QTcpSocket>
 
@@ -35,6 +36,12 @@ public:
     //创建一个实列socket
     QTcpSocket socket;
     void sendMsg(PDU*pdu);
+
+    //心跳检测相关
+    QTimer* m_pHeartbeatTimer;  //心跳定时器
+    void startHeartbeat();       //启动心跳
+    void sendHeartbeat();        //发送心跳包
+    void requestFriendPresenceSnapshot();
 //声明一个槽函数，和connect函数用的，用于启动调用showConnect这个函数
 public slots:
     void showConnect();

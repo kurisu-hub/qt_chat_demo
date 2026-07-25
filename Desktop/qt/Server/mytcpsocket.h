@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QTcpSocket>
+#include <QDateTime>
 
 class MyTcpSocket : public QTcpSocket
 {
@@ -14,12 +15,21 @@ public:
     MyTcpSocket();
     //定义一个登录名
     QString m_strLoginName;
+    QString m_sessionId;
+    bool m_authenticated = false;
+    bool m_offlineHandled = false;
     QByteArray buffer;
     PDU*readMsg();
     MsgHandler*m_pmh;//新增成员变量
     void sendMsg(PDU*pdu);
     PDU*handleMsg(PDU*pdu);
     ~MyTcpSocket();
+
+    //心跳检测相关
+    QDateTime m_lastActiveTime;  //最后活跃时间
+    void updateActiveTime();     //更新活跃时间
+    bool isTimeout();            //检查是否超时
+
 public slots:
     void recvMsg();
     void clientOffline();

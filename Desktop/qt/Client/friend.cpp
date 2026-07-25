@@ -5,14 +5,15 @@
 
 #include <QInputDialog>
 #include <QDebug>
+#include <QSet>
 Friend::Friend(QWidget *parent) :
     QWidget(parent),
     ui(new Ui::Friend)
 {   //在构造函数里面调用刷新函数
-    flushfriend();
     ui->setupUi(this);
     m_pOnlineUser=new OnlineUser;
     m_pChat=new Chat;
+    flushfriend();
 
 }
 
@@ -31,7 +32,37 @@ Friend::~Friend()
 void Friend::flushFriend_LW(QStringList friendList)
 {
     ui->listwidget->clear();
-    ui->listwidget->addItems(friendList);
+    for (const QString &friendName : friendList) {
+        QListWidgetItem *item = new QListWidgetItem(friendName, ui->listwidget);
+        item->setData(Qt::UserRole, friendName);
+        refreshFriendItem(item);
+    }
+}
+
+void Friend::applyPresenceSnapshot(const QStringList &onlineFriends)
+{
+    m_onlineFriends = QSet<QString>(onlineFriends.begin(), onlineFriends.end());
+    for (int i = 0; i < ui->listwidget->count(); ++i) refreshFriendItem(ui->listwidget->item(i));
+}
+
+void Friend::updateFriendPresence(const QString &friendName, bool online)
+{
+    if (online) m_onlineFriends.insert(friendName);
+    else m_onlineFriends.remove(friendName);
+    for (int i = 0; i < ui->listwidget->count(); ++i) {
+        QListWidgetItem *item = ui->listwidget->item(i);
+        if (item->data(Qt::UserRole).toString() == friendName) {
+            refreshFriendItem(item);
+            return;
+        }
+    }
+}
+
+void Friend::refreshFriendItem(QListWidgetItem *item)
+{
+    const QString friendName = item->data(Qt::UserRole).toString();
+    item->setText(friendName + (m_onlineFriends.contains(friendName)
+        ? QString::fromUtf8(" [在线]") : QString::fromUtf8(" [离线]")));
 }
 
 void Friend::flushfriend()
@@ -84,7 +115,7 @@ void Friend::on_del_PB_clicked()
     if(!pItem){
         return;
     }
-    QString strTarName=pItem->text();
+    QString strTarName=pItem->data(Qt::UserRole).toString();
     PDU*pdu=mkPDU();
     memcpy(pdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);//第一个是用户
     memcpy(pdu->caData+32,strTarName.toStdString().c_str(),32);//第二个是目标
@@ -98,7 +129,7 @@ void Friend::on_chat_PB_clicked()
     if(!pItem){
         return;
     }
-    m_pChat->m_strChatName=pItem->text();
+    m_pChat->m_strChatName=pItem->data(Qt::UserRole).toString();
     if(m_pChat->isHidden()){
         m_pChat->show();
     }

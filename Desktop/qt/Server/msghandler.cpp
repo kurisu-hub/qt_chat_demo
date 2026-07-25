@@ -1,6 +1,7 @@
 #include "msghandler.h"
 #include "mytcpserver.h"
 #include "operatedb.h"
+#include "presencestore.h"
 #include "server.h"
 #include <QDebug>
 #include <QDir>
@@ -60,6 +61,9 @@ PDU *MsgHandler::findUser()
     char caName[32]={'\0'};
     memcpy(caName,pdu->caData,32);
     int ret=OperateDB::getInstance().handleFindUser(caName);
+    if (ret != 2) {
+        ret = PresenceStore::getInstance().isOnline(QString::fromUtf8(caName)) ? 1 : 0;
+    }
     qDebug()<<"find user ret "<<ret;
     PDU*respdu=mkPDU();
     memcpy(respdu->caData,&ret,sizeof(int));
@@ -69,7 +73,7 @@ PDU *MsgHandler::findUser()
 
 PDU *MsgHandler::onlineUser()
 {
-    QStringList ret=OperateDB::getInstance().handleOnlineUser();
+    QStringList ret=PresenceStore::getInstance().onlineUsers();
     PDU*respdu=mkPDU(ret.size()*32);
     qDebug()<<"ret"<<ret.size();
     for(int i=0;i<ret.size();i++)
@@ -91,6 +95,9 @@ PDU *MsgHandler::addFriend()
     memcpy(caCurName,pdu->caData,32);
     memcpy(caTurName,pdu->caData+32,32);
     int ret =OperateDB::getInstance().handleAddFriend(caCurName,caTurName);
+    if (ret == 1 && !PresenceStore::getInstance().isOnline(QString::fromUtf8(caTurName))) {
+        ret = -1;
+    }
     qDebug()<<"addFriend ret"<<ret;
     if (ret==1)
     {
