@@ -13,6 +13,8 @@ public:
     PDU*pdu;
     void regist();
     void login();
+    void captcha();
+    void loginWithCaptcha();
     void findUser();
     void onlineUser();
     void addFriend();

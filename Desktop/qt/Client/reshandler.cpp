@@ -4,6 +4,8 @@
 #include "reshandler.h"
 #include "string.h"
 #include <QMessageBox>
+#include <QBuffer>
+#include <QPixmap>
 
 
 
@@ -41,6 +43,43 @@ void ResHandler::login()
     }
 }
 
+
+void ResHandler::captcha()
+{
+    //把服务器返回的 PNG 数据解码成图片显示到验证码标签上
+    QByteArray imgData(pdu->caMsg, pdu->uiMsgLen);
+    QPixmap pixmap;
+    pixmap.loadFromData(imgData, "PNG");
+    Client::getInstance().setCaptchaImage(pixmap);
+}
+
+void ResHandler::loginWithCaptcha()
+{
+    int ret;
+    memcpy(&ret,pdu->caData,sizeof(int));
+    if (ret == 1)
+    {
+        Index::getInstance().show();
+        //隐藏登录界面
+        Client::getInstance().hide();
+        //登录成功后启动心跳检测
+        Client::getInstance().startHeartbeat();
+        Client::getInstance().requestFriendPresenceSnapshot();
+    }
+    else
+    {
+        //验证码一次性失效，密码错误时同样需要刷新验证码
+        if (ret == -1)
+        {
+            QMessageBox::information(&Client::getInstance(),"提示","验证码错误");
+        }
+        else
+        {
+            QMessageBox::information(&Client::getInstance(),"提示","用户名或密码错误");
+        }
+        Client::getInstance().requestCaptcha();
+    }
+}
 
 void ResHandler::friendPresenceSnapshot()
 {

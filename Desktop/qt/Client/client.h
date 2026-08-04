@@ -7,6 +7,8 @@
 
 #include <QMainWindow>
 #include <QTimer>
+#include <QPixmap>
+#include <QEvent>
 //包含QTcpSocket
 #include <QTcpSocket>
 
@@ -42,6 +44,12 @@ public:
     void startHeartbeat();       //启动心跳
     void sendHeartbeat();        //发送心跳包
     void requestFriendPresenceSnapshot();
+    //请求一张新的验证码图片
+    void requestCaptcha();
+    //显示服务器返回的验证码图片
+    void setCaptchaImage(const QPixmap &pixmap);
+    //清空验证码输入框
+    void clearCaptchaInput();
 //声明一个槽函数，和connect函数用的，用于启动调用showConnect这个函数
 public slots:
     void showConnect();
@@ -60,6 +68,10 @@ private:
     //禁用拷贝构造和拷贝构造运算符也是为了实现单例
     Client(const Client&Instance )=delete;
     Client&operator=(const Client&)=delete;
+
+protected:
+    //拦截验证码图片的鼠标点击事件，实现点击刷新
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 };
 

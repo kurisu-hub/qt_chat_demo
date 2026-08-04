@@ -69,6 +69,45 @@
        </property>
       </widget>
      </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="label_3">
+       <property name="font">
+        <font>
+         <family>Agency FB</family>
+         <pointsize>14</pointsize>
+        </font>
+       </property>
+       <property name="text">
+        <string>验证码：</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="captcha_LE">
+       <property name="font">
+        <font>
+         <family>Agency FB</family>
+         <pointsize>14</pointsize>
+        </font>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="2">
+      <widget class="QLabel" name="captcha_LB">
+       <property name="font">
+        <font>
+         <family>Agency FB</family>
+         <pointsize>14</pointsize>
+        </font>
+       </property>
+       <property name="text">
+        <string>点击加载</string>
+       </property>
+       <property name="scaledContents">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>

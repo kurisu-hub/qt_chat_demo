@@ -30,6 +30,11 @@ public:
     void updateActiveTime();     //更新活跃时间
     bool isTimeout();            //检查是否超时
 
+    //图形验证码相关
+    QString m_captchaText;            //当前连接的验证码文本
+    void generateCaptcha();           //生成新验证码文本
+    bool verifyCaptcha(const QString &input);  //校验验证码，正确则失效
+
 public slots:
     void recvMsg();
     void clientOffline();

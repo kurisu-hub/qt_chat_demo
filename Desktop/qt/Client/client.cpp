@@ -7,6 +7,7 @@
 #include <QHostAddress>
 #include <QMessageBox>
 #include <QProcess>
+#include <QMouseEvent>
 
 Client::Client(QWidget *parent)
     : QWidget(parent)
@@ -24,6 +25,12 @@ Client::Client(QWidget *parent)
     //初始化心跳定时器
     m_pHeartbeatTimer = new QTimer(this);
     connect(m_pHeartbeatTimer, &QTimer::timeout, this, &Client::sendHeartbeat);
+
+    //点击验证码图片可刷新验证码
+    ui->captcha_LB->installEventFilter(this);
+
+    //启动后自动请求一张验证码
+    connect(&socket, &QTcpSocket::connected, this, &Client::requestCaptcha);
 }
 
 Client::~Client()
@@ -60,6 +67,16 @@ void Client::handleMsg(PDU *pdu)
         m_prh->login();
         break;
 
+    }
+    case ENUM_MSG_TYPE_CAPTCHA_RESPOND:
+    {
+        m_prh->captcha();
+        break;
+    }
+    case ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_RESPOND:
+    {
+        m_prh->loginWithCaptcha();
+        break;
     }
     case ENUM_MSG_TYPE_FIND_USER_RESPOND:
     {
@@ -217,7 +234,7 @@ void Client::recvMsg()
     buffer.append(data);
     while(buffer.size()>=int(sizeof(PDU))){
         PDU*pdu=(PDU*)buffer.data();
-        if(buffer.size()<int(sizeof(PDU))){
+        if(buffer.size()<int(pdu->uiTotalLen)){
             break;
         }
         handleMsg(pdu);
@@ -275,15 +292,52 @@ void Client::on_login_PB_clicked()
 {
     QString strName=ui->name_LE->text();
     QString strPwd=ui->pwd_LE->text();
+    QString strCaptcha=ui->captcha_LE->text();
+    if(strCaptcha.isEmpty())
+    {
+        QMessageBox::information(this,"提示","请输入验证码");
+        return;
+    }
     this->m_strLoginName=strName;
-    PDU*pdu=mkPDU();
+    PDU*pdu=mkPDU(strCaptcha.toStdString().size()+1);
     memcpy(pdu->caData,strName.toStdString().c_str(),32);
     memcpy(pdu->caData+32,strPwd.toStdString().c_str(),32);
-    pdu->uiType=ENUM_MSG_TYPE_LOGIN_REQUEST;
+    memcpy(pdu->caMsg,strCaptcha.toStdString().c_str(),strCaptcha.toStdString().size()+1);
+    pdu->uiType=ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST;
     socket.write((char*)pdu,pdu->uiTotalLen);
-    qDebug()<<"send login uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
+    qDebug()<<"send login-with-captcha uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
     free(pdu);
     pdu=NULL;
+}
+
+void Client::requestCaptcha()
+{
+    PDU*pdu=mkPDU();
+    pdu->uiType=ENUM_MSG_TYPE_CAPTCHA_REQUEST;
+    sendMsg(pdu);
+}
+
+void Client::setCaptchaImage(const QPixmap &pixmap)
+{
+    ui->captcha_LB->setPixmap(pixmap);
+    //清空输入框，要求用户输入新验证码
+    ui->captcha_LE->clear();
+}
+
+void Client::clearCaptchaInput()
+{
+    ui->captcha_LE->clear();
+}
+
+bool Client::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == ui->captcha_LB && event->type() == QEvent::MouseButtonRelease)
+    {
+        //点击验证码图片刷新验证码
+        requestCaptcha();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void Client::startHeartbeat()
