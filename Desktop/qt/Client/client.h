@@ -29,7 +29,6 @@ public:
     QString m_strLoginName;
     ResHandler* m_prh;
     QByteArray buffer;
-    PDU* readMsg();
     void handleMsg(PDU*pdu);
     //使用静态的函数，引用防止被拷贝构造
     static Client& getInstance();
@@ -62,6 +61,7 @@ private slots:
     void on_login_PB_clicked();
 
 private:
+    bool m_dispatching = false;
     Ui::Client *ui;
     //将构造函数私有化，这是为了实现单例
     Client(QWidget *parent = nullptr);

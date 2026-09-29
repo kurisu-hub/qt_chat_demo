@@ -27,10 +27,8 @@ void OnlineUser::on_listWidget_itemDoubleClicked(QListWidgetItem *item)
     QString strCurName=Client::getInstance().m_strLoginName;
     QString strTarName=item->text();
     pdu->uiType=ENUM_MSG_TYPE_ADD_FRIEND_REQUEST;
-    memcpy(pdu->caData,strCurName.toStdString().c_str(),32);
-    memcpy(pdu->caData+32,strTarName.toStdString().c_str(),32);
-    qDebug()<<"pdu->caData:"<<pdu->caData;
-    qDebug()<<"pdu->caData+32:"<<pdu->caData+32;
+    copyTextField(pdu->caData, strCurName);
+    copyTextField(pdu->caData+32, strTarName);
     Client::getInstance().sendMsg(pdu);
 
 }

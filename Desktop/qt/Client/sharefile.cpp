@@ -67,15 +67,15 @@ void ShareFile::on_ok_PB_clicked()
        // 先清零整个caData，避免脏数据
        memset(pdu->caData, 0, 64);
        // 0~31：发送者用户名
-       memcpy(pdu->caData, strCurName.toStdString().c_str(), 31);
+       copyTextField(pdu->caData, strCurName);
        // 32~35：好友数量（int）
        memcpy(pdu->caData + 32, &iFriendSize, sizeof(int));
        // 前半段：好友名称数组
        for(int i=0; i<iFriendSize; i++)
        {
-           std::string friendName = pItems[i]->text().toStdString();
+           QString friendName = pItems[i]->data(Qt::UserRole).toString();
            memset(pdu->caMsg + i*32, 0, 32);
-           memcpy(pdu->caMsg + i*32, friendName.c_str(), 31);
+           copyTextField(pdu->caMsg + i*32, friendName);
        }
        // 完整文件路径
        memcpy(pdu->caMsg + 32*iFriendSize, stdSharePath.c_str(), stdSharePath.size() + 1);

@@ -1,8 +1,8 @@
 #ifndef OPERATEDB_H
 #define OPERATEDB_H
-
 #include <QObject>
 #include <QSqlDatabase>
+#include <QStringList>
 
 class OperateDB : public QObject
 {
@@ -10,29 +10,26 @@ class OperateDB : public QObject
 public:
     QSqlDatabase m_db;
     ~OperateDB();
-    //数据库的连接函数
     void connect();
-    //单例
-    static OperateDB&getInstance();
-    //创造处理注册功能的函数
-    bool handleRegist(char*caName,char*caPwd);
-    //创造处理登录功能的函数
-    bool handleLogin(char*caName,char*caPwd);
-    //创造处理设置在线的函数，用const是为了在tss.cs这么转的时候这个成员变量不是变量需要用const来做参数
-    void handleOffline(const char*caName);
-    int handleFindUser(const char*caName);
+    bool isReady() const;
+    static OperateDB &getInstance();
+    bool handleRegist(const char *caName, const char *caPwd);
+    bool handleLogin(const char *caName, const char *caPwd);
+    void handleOffline(const char *caName);
+    // Found=1, missing=2, error=-1; never returns an ID.
+    int handleFindUser(const char *caName);
     QStringList handleOnlineUser();
-    int handleAddFriend(char*caCurName,char*caTarName);
-    bool handleAddFriendAgree(char*caCurName,char*caTarName);
-    QStringList handleFlushFriend(char*caName);
-    bool handleDeleteFriend(char*caCurName,char*caTarName);
-    int isFriend(char*caCurName,char*caTarName);
+    // Eligible=1, missing/error=-1, already friends=-2, self=-3.
+    int handleAddFriend(const char *caCurName, const char *caTarName);
+    bool handleAddFriendAgree(const char *caCurName, const char *caTarName);
+    QStringList handleFlushFriend(const char *caName);
+    bool handleDeleteFriend(const char *caCurName, const char *caTarName);
+    int isFriend(const char *caCurName, const char *caTarName);
 private:
     explicit OperateDB(QObject *parent = nullptr);
-    OperateDB(const OperateDB&instance)=delete;
-    OperateDB&operator=(const OperateDB)=delete;
-signals:
-
+    OperateDB(const OperateDB &) = delete;
+    OperateDB &operator=(const OperateDB &) = delete;
+    bool m_schemaReady = false;
+    bool ready() const;
 };
-
-#endif // OPERATEDB_H
+#endif

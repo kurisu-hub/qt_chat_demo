@@ -1,289 +1,157 @@
 #include "mytcpsocket.h"
-#include "protocol.h"
 #include "operatedb.h"
 #include "mytcpserver.h"
 #include "presencestore.h"
 #include "captchacode.h"
+#include "security.h"
+#include "server.h"
 #include <QUuid>
 #include <QBuffer>
+#include <QScopedValueRollback>
+#include <memory>
+#include <cstring>
+
 MyTcpSocket::MyTcpSocket()
 {
-
-    connect(this,&QTcpSocket::readyRead,this,&MyTcpSocket::recvMsg);
-    connect(this,&QTcpSocket::disconnected,this,&MyTcpSocket::clientOffline);
-    m_pmh=new MsgHandler;
-    //初始化最后活跃时间
-    m_lastActiveTime = QDateTime::currentDateTime();
+    connect(this, &QTcpSocket::readyRead, this, &MyTcpSocket::recvMsg);
+    connect(this, &QTcpSocket::disconnected, this, &MyTcpSocket::clientOffline);
+    setReadBufferSize(Security::MaxFrame);
+    m_pmh = new MsgHandler;
+    updateActiveTime();
 }
-
-PDU *MyTcpSocket::readMsg()
-{
-    qDebug()<<"socket中的总长度为:"<<this->bytesAvailable();
-    uint uiPDULen=0;
-    this->read((char*)&uiPDULen,sizeof(uint));
-    uint uiMsgLen=uiPDULen-sizeof(PDU);
-    PDU*pdu=mkPDU(uiMsgLen);
-    this->read((char*)pdu+sizeof(uint),uiPDULen-sizeof(uint));
-    qDebug()<<"uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
-    return pdu;
-}
+MyTcpSocket::~MyTcpSocket() { delete m_pmh; }
 
 PDU *MyTcpSocket::handleMsg(PDU *pdu)
 {
-    qDebug()<<"readMsg uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
-    PDU*respdu=NULL;
-    m_pmh->pdu=pdu;
-    switch (pdu->uiType){
-    case ENUM_MSG_TYPE_CAPTCHA_REQUEST:
-    {
-        //生成验证码文本，绘制成图片后以 PNG 编码放进 caMsg 返回
+    if (!Security::validRequest(pdu)) { abort(); return nullptr; }
+    const bool publicRequest = pdu->uiType == ENUM_MSG_TYPE_CAPTCHA_REQUEST
+        || pdu->uiType == ENUM_MSG_TYPE_REGIST_REQUEST
+        || pdu->uiType == ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST;
+    // Authentication belongs to this connection, never to a name in the packet.
+    // Re-authentication on a live session would leave stale presence entries.
+    if ((!m_authenticated && !publicRequest) || (m_authenticated && publicRequest)) {
+        abort(); return nullptr;
+    }
+    if (publicRequest) {
+        QElapsedTimer &last = pdu->uiType == ENUM_MSG_TYPE_CAPTCHA_REQUEST ? m_lastCaptchaRequest : m_lastAuthRequest;
+        if (last.isValid() && last.elapsed() < 1000) { abort(); return nullptr; }
+        last.start();
+    }
+    m_pmh->pdu = pdu;
+    m_pmh->actor = m_strLoginName;
+    switch (pdu->uiType) {
+    case ENUM_MSG_TYPE_CAPTCHA_REQUEST: {
         generateCaptcha();
-        QPixmap pixmap = CaptchaCode::drawCaptcha(m_captchaText);
-        QByteArray imgData;
-        QBuffer buffer(&imgData);
-        buffer.open(QIODevice::WriteOnly);
+        const QPixmap pixmap = CaptchaCode::drawCaptcha(m_captchaText);
+        QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly);
         pixmap.save(&buffer, "PNG");
-        buffer.close();
-        respdu = mkPDU(imgData.size());
-        memcpy(respdu->caMsg, imgData.constData(), imgData.size());
-        respdu->uiType = ENUM_MSG_TYPE_CAPTCHA_RESPOND;
-        qDebug() << "生成验证码:" << m_captchaText << "图片字节数:" << imgData.size();
-        break;
+        PDU *reply = mkPDU(bytes.size()); reply->uiType = ENUM_MSG_TYPE_CAPTCHA_RESPOND;
+        memcpy(reply->caMsg, bytes.constData(), bytes.size()); return reply;
     }
-    case ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST:
-    {
-        //caData：0~31 用户名，32~63 密码，caMsg：验证码文本
-        char caName[32] = {'\0'};
-        char caPwd[32] = {'\0'};
-        memcpy(caName, pdu->caData, 32);
-        memcpy(caPwd, pdu->caData + 32, 32);
-        QString strInputCaptcha = QString::fromUtf8(pdu->caMsg);
-
-        //int 结果：1=登录成功 0=用户名或密码错误 -1=验证码错误
-        int result = 0;
-        if (!verifyCaptcha(strInputCaptcha)) {
-            result = -1;
-            qDebug() << "验证码错误，输入:" << strInputCaptcha << "正确:" << m_captchaText;
-        } else {
-            bool loginOk = OperateDB::getInstance().handleLogin(caName, caPwd);
-            if (loginOk) {
-                result = 1;
-                m_strLoginName = QString::fromUtf8(caName);
+    case ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST: {
+        int result = -1;
+        if (verifyCaptcha(QString::fromUtf8(pdu->caMsg))) {
+            result = 0;
+            const QString user = Security::field(pdu->caData);
+            if (OperateDB::getInstance().handleLogin(pdu->caData, pdu->caData + 32)
+                    && !Security::userRoot(Server::getInstance().m_strRootPath, user, true).isEmpty()) {
+                result = 1; m_strLoginName = user;
                 m_sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                m_authenticated = true;
-                m_offlineHandled = false;
-                if (PresenceStore::getInstance().login(m_strLoginName, m_sessionId)) {
-                    MyTcpServer::getInstance().notifyFriendsPresence(m_strLoginName, true, 0);
-                }
-            } else {
-                result = 0;
+                m_authenticated = true; m_offlineHandled = false;
+                if (PresenceStore::getInstance().login(user, m_sessionId))
+                    MyTcpServer::getInstance().notifyFriendsPresence(user, true, 0);
             }
         }
-        respdu = mkPDU();
-        memcpy(respdu->caData, &result, sizeof(int));
-        respdu->uiType = ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_RESPOND;
-        break;
+        PDU *reply = mkPDU(); reply->uiType = ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_RESPOND;
+        memcpy(reply->caData, &result, sizeof(result)); return reply;
     }
-    case ENUM_MSG_TYPE_REGIST_REQUEST:
-    {
-            respdu=m_pmh->regist();
-            break;
-    }
-    case ENUM_MSG_TYPE_LOGIN_REQUEST:
-    {
-        respdu=m_pmh->login(m_strLoginName);
-        bool loginOk = false;
-        memcpy(&loginOk, respdu->caData, sizeof(bool));
-        if (loginOk) {
-            m_sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            m_authenticated = true;
-            m_offlineHandled = false;
-            if (PresenceStore::getInstance().login(m_strLoginName, m_sessionId)) {
-                MyTcpServer::getInstance().notifyFriendsPresence(m_strLoginName, true, 0);
-            }
+    case ENUM_MSG_TYPE_REGIST_REQUEST: return m_pmh->regist();
+    case ENUM_MSG_TYPE_FIND_USER_REQUEST: return m_pmh->findUser();
+    case ENUM_MSG_TYPE_ONLINE_USER_REQUEST: return m_pmh->onlineUser();
+    case ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_REQUEST: {
+        const QStringList friends = OperateDB::getInstance().handleFlushFriend(m_strLoginName.toUtf8().constData());
+        QStringList online;
+        for (const QString &name : friends) {
+            if (PresenceStore::getInstance().isOnline(name)) online.append(name);
+            if (online.size() >= int((Security::MaxFrame - sizeof(PDU)) / 32)) break;
         }
-        break;
+        PDU *reply = mkPDU(online.size() * 32); reply->uiType = ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_RESPOND;
+        for (int i = 0; i < online.size(); ++i) Security::putField(reply->caMsg + i * 32, online[i]);
+        return reply;
     }
-    case ENUM_MSG_TYPE_FIND_USER_REQUEST:
-    {
-        respdu=m_pmh->findUser();
-        break;
-    }
-    case ENUM_MSG_TYPE_ONLINE_USER_REQUEST:
-    {
-        respdu=m_pmh->onlineUser();
-        break;
-    }
-    case ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_REQUEST:
-    {
-        QByteArray owner = m_strLoginName.toUtf8();
-        char ownerName[32] = {0};
-        memcpy(ownerName, owner.constData(), qMin(owner.size(), 31));
-        const QStringList friends = OperateDB::getInstance().handleFlushFriend(ownerName);
-        QStringList onlineFriends;
-        for (const QString &friendName : friends) {
-            if (PresenceStore::getInstance().isOnline(friendName)) onlineFriends.append(friendName);
-        }
-        respdu = mkPDU(onlineFriends.size() * 32);
-        respdu->uiType = ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_RESPOND;
-        for (int i = 0; i < onlineFriends.size(); ++i) {
-            QByteArray name = onlineFriends.at(i).toUtf8();
-            memcpy(respdu->caMsg + i * 32, name.constData(), qMin(name.size(), 31));
-        }
-        break;
-    }
-    case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:
-    {
-        respdu=m_pmh->addFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_ADD_FRIEND_AGREE_REQUEST:
-    {
-        respdu=m_pmh->addfriendAgree();
-        break;
-    }
-    case ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST:
-    {
-        respdu=m_pmh->flushFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST:
-    {
-        respdu=m_pmh->deleteFriend();
-        break;
-    }
-    case ENUM_MSG_TYPE_CHAT_REQUEST:
-    {
-        respdu=m_pmh->chat();
-        break;
-    }
-    case ENUM_MSG_TYPE_CREATE_FILE_REQUEST:
-    {
-        respdu=m_pmh->createFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_FLUSH_FILE_REQUEST:
-    {
-        respdu=m_pmh->flushFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_DEL_FILE_REQUEST:
-    {
-        respdu=m_pmh->delFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_RENAME_FILE_REQUEST:
-    {
-        respdu=m_pmh->renameFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST:
-    {
-        respdu=m_pmh->uploadFileInit();
-        break;
-    }
-    case ENUM_MSG_TYPE_UPLOAD_FILE_DATA_REQUEST:
-    {
-        respdu=m_pmh->uploadFileData();
-        break;
-    }
-    case ENUM_MSG_TYPE_DOWNLOAD_FILE_REQUEST:
-    {
-        respdu=m_pmh->downloadFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST:
-    {
-        respdu=m_pmh->downloadFileData();
-        break;
-    }
-    case ENUM_MSG_TYPE_SHARE_FILE_REQUEST:
-    {
-        respdu=m_pmh->shareFile();
-        break;
-    }
-    case ENUM_MSG_TYPE_SHARE_FILE_RESPOND:
-    {
-        respdu=m_pmh->shareFileAgree();
-        break;
-    }
-    case ENUM_MSG_TYPE_HEARTBEAT_REQUEST:
-    {
-        //收到心跳请求，更新活跃时间并响应
-        updateActiveTime();
+    case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST: return m_pmh->addFriend();
+    case ENUM_MSG_TYPE_ADD_FRIEND_AGREE_REQUEST: return m_pmh->addfriendAgree();
+    case ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST: return m_pmh->flushFriend();
+    case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST: return m_pmh->deleteFriend();
+    case ENUM_MSG_TYPE_CHAT_REQUEST: return m_pmh->chat();
+    case ENUM_MSG_TYPE_CREATE_FILE_REQUEST: return m_pmh->createFile();
+    case ENUM_MSG_TYPE_FLUSH_FILE_REQUEST: return m_pmh->flushFile();
+    case ENUM_MSG_TYPE_DEL_FILE_REQUEST: return m_pmh->delFile();
+    case ENUM_MSG_TYPE_RENAME_FILE_REQUEST: return m_pmh->renameFile();
+    case ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST: return m_pmh->uploadFileInit();
+    case ENUM_MSG_TYPE_UPLOAD_FILE_DATA_REQUEST: return m_pmh->uploadFileData();
+    case ENUM_MSG_TYPE_DOWNLOAD_FILE_REQUEST: return m_pmh->downloadFile();
+    case ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST: return m_pmh->downloadFileData();
+    case ENUM_MSG_TYPE_SHARE_FILE_REQUEST: return m_pmh->shareFile();
+    case ENUM_MSG_TYPE_SHARE_FILE_RESPOND: return m_pmh->shareFileAgree();
+    case ENUM_MSG_TYPE_HEARTBEAT_REQUEST: {
         PresenceStore::getInstance().heartbeat(m_strLoginName, m_sessionId);
-        respdu = mkPDU();
-        respdu->uiType = ENUM_MSG_TYPE_HEARTBEAT_RESPOND;
-        qDebug()<<"收到用户"<<m_strLoginName<<"的心跳包";
-        break;
+        PDU *reply = mkPDU(); reply->uiType = ENUM_MSG_TYPE_HEARTBEAT_RESPOND; return reply;
     }
-    default:
-        break;
-}
-    return respdu;
+    default: abort(); return nullptr;
+    }
 }
 
-MyTcpSocket::~MyTcpSocket()
-{
-    delete m_pmh;
-}
 void MyTcpSocket::recvMsg()
 {
-    qDebug()<<"recvMsg消息的总长度"<<this->bytesAvailable();
-
-    QByteArray data=readAll();
-    buffer.append(data);
-    while(buffer.size()>=int(sizeof(PDU))){
-        PDU*pdu=(PDU*)buffer.data();
-
-        if(buffer.size()<int(pdu->uiTotalLen)){
-            break;
-        }
+    if (m_dispatching) return;
+    QScopedValueRollback<bool> guard(m_dispatching, true);
+    while (state() == QAbstractSocket::ConnectedState) {
+        // Read only enough for the header/frame; a burst cannot grow our buffer unboundedly.
+        if (buffer.size() < int(sizeof(PDU))) buffer.append(read(int(sizeof(PDU)) - buffer.size()));
+        if (buffer.size() < int(sizeof(PDU))) return;
+        uint total = 0, payload = 0;
+        memcpy(&total, buffer.constData(), sizeof(total));
+        memcpy(&payload, buffer.constData() + sizeof(uint), sizeof(payload));
+        if (!Security::validHeader(total, payload)) { buffer.clear(); abort(); return; }
+        if (buffer.size() < int(total)) buffer.append(read(int(total) - buffer.size()));
+        if (buffer.size() < int(total)) return;
+        std::unique_ptr<PDU, decltype(&free)> request(mkPDU(payload), &free);
+        memcpy(request.get(), buffer.constData(), total); buffer.clear();
+        std::unique_ptr<PDU, decltype(&free)> reply(handleMsg(request.get()), &free);
+        m_pmh->pdu = nullptr;
+        if (state() != QAbstractSocket::ConnectedState) return;
         updateActiveTime();
-        PDU*respdu=handleMsg(pdu);
-        sendMsg(respdu);
-        buffer.remove(0,pdu->uiTotalLen);
-
-   }
-
+        sendMsg(reply.get());
+        if (request->uiType == ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST && reply && reply->caData[0]) {
+            qint64 size = 0; memcpy(&size, request->caData + 32, sizeof(size));
+            if (size == 0) {
+                PDU completion = {}; completion.uiTotalLen = sizeof(PDU);
+                completion.uiType = ENUM_MSG_TYPE_UPLOAD_FILE_DATA_RESPOND; completion.caData[0] = 1;
+                sendMsg(&completion);
+            }
+        }
+    }
 }
-
 void MyTcpSocket::clientOffline()
 {
     MyTcpServer::getInstance().userOffline(this, 0);
     MyTcpServer::getInstance().removeSocket(this);
 }
-
+// Borrows pdu; caller owns it. QTcpSocket copies into its write buffer.
 void MyTcpSocket::sendMsg(PDU *pdu)
-{   if(pdu==NULL){
-    return;
-    }
-    this->write((char*)pdu,pdu->uiTotalLen);
-    qDebug()<<"send uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
-}
-
-void MyTcpSocket::updateActiveTime()
 {
-    m_lastActiveTime = QDateTime::currentDateTime();
+    if (!pdu) return;
+    if (!Security::validHeader(pdu->uiTotalLen, pdu->uiMsgLen)
+            || bytesToWrite() + pdu->uiTotalLen > 4LL * Security::MaxFrame) { abort(); return; }
+    if (write(reinterpret_cast<const char *>(pdu), pdu->uiTotalLen) < 0) abort();
 }
-
-void MyTcpSocket::generateCaptcha()
-{
-    m_captchaText = CaptchaCode::generateText();
-}
-
+void MyTcpSocket::updateActiveTime() { m_lastActiveTime = QDateTime::currentDateTime(); m_activity.start(); }
+void MyTcpSocket::generateCaptcha() { m_captchaText = CaptchaCode::generateText(); m_captchaAge.start(); }
 bool MyTcpSocket::verifyCaptcha(const QString &input)
 {
-    //不区分大小写比对，比对后无论对错都让验证码失效，防止暴力重试
-    bool ok = input.compare(m_captchaText, Qt::CaseInsensitive) == 0;
-    m_captchaText.clear();
-    return ok;
+    const bool ok = !m_captchaText.isEmpty() && !input.isEmpty() && m_captchaAge.isValid()
+        && m_captchaAge.elapsed() <= 120000 && input.compare(m_captchaText, Qt::CaseInsensitive) == 0;
+    m_captchaText.clear(); m_captchaAge.invalidate(); return ok;
 }
-
-bool MyTcpSocket::isTimeout()
-{
-    //超过90秒没有活动则认为超时
-    qint64 seconds = m_lastActiveTime.secsTo(QDateTime::currentDateTime());
-    return seconds > 90;
-}
-
+bool MyTcpSocket::isTimeout() { return m_activity.elapsed() > (m_authenticated ? 90000 : 30000); }

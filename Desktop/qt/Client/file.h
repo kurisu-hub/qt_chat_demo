@@ -5,6 +5,7 @@
 #include "sharefile.h"
 
 #include <QFile>
+#include <QSaveFile>
 #include <QListWidget>
 #include <QWidget>
 
@@ -24,7 +25,10 @@ public:
     QList<FileInfo*>m_pFileList;
     QString m_strUploadPath;
     QFile m_fUploadfile;
-    QFile m_fDownloadfile;
+    bool m_uploadPending = false;
+    QSaveFile m_fDownloadfile;
+    bool m_downloadPending = false;
+    void cancelDownload();
     ShareFile *m_pShareFile;
     explicit File(QWidget *parent = nullptr);
     ~File();
@@ -32,6 +36,8 @@ public:
     void flushFile_LW(QList<FileInfo*>pFileList);
     void flushFile();
     void UploadFile();
+    void pumpUpload();
+    void cancelUpload();
     void initFileList();
 private slots:
     void on_mkDir_PB_clicked();

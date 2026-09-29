@@ -16,6 +16,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    security.cpp \
+    passwordhash.cpp \
     captchacode.cpp \
     main.cpp \
     msghandler.cpp \
@@ -27,6 +29,8 @@ SOURCES += \
     server.cpp
 
 HEADERS += \
+    security.h \
+    passwordhash.h \
     captchacode.h \
     msghandler.h \
     mytcpserver.h \

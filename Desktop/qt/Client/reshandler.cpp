@@ -11,8 +11,7 @@
 
 void ResHandler::regist()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if(ret)
     {
          QMessageBox::information(&Client::getInstance(),"提示","注册成功");
@@ -26,8 +25,7 @@ void ResHandler::regist()
 
 void ResHandler::login()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if (ret)
     {
         Index::getInstance().show();
@@ -127,7 +125,6 @@ void ResHandler::onlineUser()
     for(int i=0;i<iSize;i++)
     {
         memcpy(caTmp,pdu->caMsg+i*32,32);
-        qDebug()<<"caTmp"<<caTmp;
         nameList.append(caTmp);
     }
     Index::getInstance().getFriend()->m_pOnlineUser->updateOnlineUser(nameList);
@@ -169,8 +166,7 @@ void ResHandler::addFriendResend()
 
 void ResHandler::addFriendAgree()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if(ret){
         Index::getInstance().getFriend()->flushfriend();
     }
@@ -196,8 +192,7 @@ void ResHandler::flushFriend()
 
 void ResHandler::deleteFriend()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(ret));
+    const bool ret = pdu->caData[0] != 0;
     qDebug()<<"bool ret为:"<<ret;
     if(ret){
         Index::getInstance().getFriend()->flushfriend();
@@ -214,11 +209,11 @@ void ResHandler::chat()
     memcpy(&ret,pdu->caData,sizeof(int));
     qDebug()<<"登录名"<<Client::getInstance().m_strLoginName<<"ret"<<ret;
     qDebug() << "ret的数值：" << static_cast<int>(ret);
-    if(ret==0){
+    if(pdu->uiMsgLen == 0 && ret==0){
         qDebug()<<"登录名"<<Client::getInstance().m_strLoginName;
         QMessageBox::information(&Index::getInstance(),"提示","对方不是你好友，请添加好友再聊天");
         Index::getInstance().getFriend()->m_pChat->isHidden();
-        flushFriend();
+        Index::getInstance().getFriend()->flushfriend();
         return;
     }
     char caChatName[32]={'\0'};
@@ -234,8 +229,7 @@ void ResHandler::chat()
 
 void ResHandler::createFile()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(ret));
+    const bool ret = pdu->caData[0] != 0;
     if(ret){
         QMessageBox::information(&Index::getInstance(),"提示","文件创造成功");
         Index::getInstance().getFile()->flushFile();
@@ -252,7 +246,6 @@ void ResHandler::flushFile()
     for(int i=0;i<iCount;i++){
         FileInfo *pFileInfo=new FileInfo;
         memcpy(pFileInfo,pdu->caMsg+i*sizeof(FileInfo),sizeof(FileInfo));
-        qDebug()<<"flushFile pFileInfo->caName"<<pFileInfo->caName;
         pFileList.append(pFileInfo);
     }
     Index::getInstance().getFile()->updateFileList(pFileList);
@@ -260,8 +253,7 @@ void ResHandler::flushFile()
 
 void ResHandler::delFile()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if(ret==true){
        Index::getInstance().getFile()->flushFile();
     }
@@ -272,8 +264,7 @@ void ResHandler::delFile()
 
 void ResHandler::renameFile()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if(ret){
         Index::getInstance().getFile()->flushFile();
     }
@@ -284,14 +275,14 @@ void ResHandler::renameFile()
 
 void ResHandler::uploadFileInit()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     qDebug()<<"ret"<<ret;
     if(ret){
         Index::getInstance().getFile()->UploadFile();
 
     }
     else{
+        Index::getInstance().getFile()->cancelUpload();
         QMessageBox::information(&Index::getInstance(),"提示","文件上传失败");
     }
 }
@@ -303,85 +294,49 @@ ResHandler::ResHandler()
 
 void ResHandler::downfile()
 {
-    bool ret;
-
-     memcpy(&ret,
-            pdu->caData,
-            sizeof(bool));
-
-
-     if(ret)
-     {
-         QMessageBox::information(
-                     &Index::getInstance(),
-                     "提示",
-                     "开始下载");
-
-
-         Index::getInstance()
-                 .getFile()
-                 ->m_fDownloadfile.open(QIODevice::WriteOnly);
-
-
-         //请求第一块数据
-
-         PDU*pdu=mkPDU();
-
-
-         pdu->uiType=
-         ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST;
-
-
-         Client::getInstance().sendMsg(pdu);
-
-     }
-     else
-     {
-         QMessageBox::information(
-                     &Index::getInstance(),
-                     "提示",
-                     "下载失败");
-     }
-
+    File *file = Index::getInstance().getFile();
+    if (!file->m_downloadPending || !file->m_fDownloadfile.isOpen()) return;
+    if (pdu->caData[0] == 0) {
+        file->cancelDownload();
+        QMessageBox::information(&Index::getInstance(), "提示", "下载失败");
+        return;
+    }
+    QMessageBox::information(&Index::getInstance(), "提示", "开始下载");
+    if (!file->m_downloadPending) return; // disconnect during the dialog
+    PDU *request = mkPDU();
+    request->uiType = ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST;
+    Client::getInstance().sendMsg(request);
 }
 
 void ResHandler::downloadFileData()
 {
-    Index::getInstance()
-               .getFile()
-               ->m_fDownloadfile.write(
-                   pdu->caMsg,
-                   pdu->uiMsgLen
-               );
-
-
-       //继续请求下一块
-
-
-       PDU*pdu=mkPDU();
-
-
-       pdu->uiType=
-       ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST;
-
-
-       Client::getInstance().sendMsg(pdu);
-
+    File *file = Index::getInstance().getFile();
+    if (!file->m_downloadPending || !file->m_fDownloadfile.isOpen()) return;
+    if (file->m_fDownloadfile.write(pdu->caMsg, pdu->uiMsgLen) != qint64(pdu->uiMsgLen)) {
+        const QString error = file->m_fDownloadfile.errorString();
+        file->cancelDownload();
+        QMessageBox::information(&Index::getInstance(), "提示", QString("下载写入失败：%1").arg(error));
+        return;
+    }
+    PDU *request = mkPDU();
+    request->uiType = ENUM_MSG_TYPE_DOWNLOAD_FILE_DATA_REQUEST;
+    Client::getInstance().sendMsg(request);
 }
 
 void ResHandler::downloadFileFinish()
 {
-
-    Index::getInstance()
-            .getFile()
-            ->m_fDownloadfile.close();
-
-
-    QMessageBox::information(
-                &Index::getInstance(),
-                "提示",
-                "下载完成");
-
+    File *file = Index::getInstance().getFile();
+    if (!file->m_downloadPending || !file->m_fDownloadfile.isOpen()) return;
+    if (pdu->caData[0] == 0) {
+        file->cancelDownload();
+        QMessageBox::information(&Index::getInstance(), "提示", "下载失败");
+        return;
+    }
+    const bool saved = file->m_fDownloadfile.commit();
+    const QString error = file->m_fDownloadfile.errorString();
+    file->m_downloadPending = false;
+    QMessageBox::information(&Index::getInstance(), "提示",
+        saved ? QString("下载完成") : QString("下载保存失败：%1").arg(error));
 }
 
 void ResHandler::shareFileResend()
@@ -408,8 +363,7 @@ void ResHandler::shareFileResend()
     // caData 整体清零
     memset(respdu->caData, 0, 64);
     // 0~31字节：接收者（当前用户）用户名
-    std::string strMyName = Client::getInstance().m_strLoginName.toStdString();
-    memcpy(respdu->caData, strMyName.c_str(), std::min((size_t)31, strMyName.size()));
+    copyTextField(respdu->caData, Client::getInstance().m_strLoginName);
     // 32~35字节：int类型同意标记，固定4字节，和服务器读取位置严格对齐
     memcpy(respdu->caData + 32, &iAcceptFlag, sizeof(int));
 
@@ -422,8 +376,7 @@ void ResHandler::shareFileResend()
 
 void ResHandler::shareFileAgree()
 {
-    bool ret;
-    memcpy(&ret,pdu->caData,sizeof(bool));
+    const bool ret = pdu->caData[0] != 0;
     if(ret)
     {
         QMessageBox::information(&Index::getInstance(),"提示","分享文件完成");

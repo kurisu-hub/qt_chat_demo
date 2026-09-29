@@ -4,6 +4,7 @@
 #include "client.h"
 #include "protocol.h"
 #include "ui_chat.h"
+#include <QMessageBox>
 
 Chat::Chat(QWidget *parent) :
     QWidget(parent),
@@ -55,15 +56,19 @@ void Chat::on_send_PB_clicked()
     if(strMsg.isEmpty()){
         return;
     }
+    if (strMsg.toUtf8().size() > 4095 || strMsg.contains(QChar(0))) {
+        QMessageBox::information(this, "提示", "消息过长，最多支持 4095 字节 UTF-8 文本");
+        return;
+    }
     ui->input_LE->clear();
     PDU*pdu=mkPDU(strMsg.toStdString().size()+1);
     //第一个32是用于记录自己
-    memcpy(pdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);
+    copyTextField(pdu->caData, Client::getInstance().m_strLoginName);
     //第二个32是用于记录发送目标
-    memcpy(pdu->caData+32,m_strChatName.toStdString().c_str(),32);
+    copyTextField(pdu->caData+32, m_strChatName);
     memcpy(pdu->caMsg,strMsg.toStdString().c_str(),strMsg.toStdString().size());
     pdu->uiType=ENUM_MSG_TYPE_CHAT_REQUEST;
     Client::getInstance().sendMsg(pdu);
-    appendAlignedColoredText(ui->show_TE,QString("%1").arg(pdu->caMsg),Qt::AlignRight,Qt::green);
+    appendAlignedColoredText(ui->show_TE,strMsg,Qt::AlignRight,Qt::green);
 
 }

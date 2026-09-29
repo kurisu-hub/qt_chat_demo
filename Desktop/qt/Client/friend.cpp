@@ -68,7 +68,7 @@ void Friend::refreshFriendItem(QListWidgetItem *item)
 void Friend::flushfriend()
 {   //获取登录名方便获取列表，把登录名发送给服务器
     PDU*pdu=mkPDU();
-    memcpy(pdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);
+    copyTextField(pdu->caData, Client::getInstance().m_strLoginName);
     pdu->uiType=ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST;
     Client::getInstance().sendMsg(pdu);
 }
@@ -86,7 +86,7 @@ void Friend::on_findUser_PB_clicked()
     }
     //把信息发送给服务器，让服务器进行查找就行了
     PDU*pdu=mkPDU();
-    memcpy(pdu->caData,strName.toStdString().c_str(),32);
+    copyTextField(pdu->caData, strName);
     pdu->uiType=ENUM_MSG_TYPE_FIND_USER_REQUEST;
     Client::getInstance().sendMsg(pdu);
 }
@@ -117,8 +117,8 @@ void Friend::on_del_PB_clicked()
     }
     QString strTarName=pItem->data(Qt::UserRole).toString();
     PDU*pdu=mkPDU();
-    memcpy(pdu->caData,Client::getInstance().m_strLoginName.toStdString().c_str(),32);//第一个是用户
-    memcpy(pdu->caData+32,strTarName.toStdString().c_str(),32);//第二个是目标
+    copyTextField(pdu->caData, Client::getInstance().m_strLoginName);//第一个是用户
+    copyTextField(pdu->caData+32, strTarName);//第二个是目标
     pdu->uiType=ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST;
     Client::getInstance().sendMsg(pdu);
 }

@@ -1,0 +1,2 @@
+# Isolated build products for security regression checks.
+/.build-security/

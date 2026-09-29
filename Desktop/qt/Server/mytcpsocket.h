@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QTcpSocket>
 #include <QDateTime>
+#include <QElapsedTimer>
 
 class MyTcpSocket : public QTcpSocket
 {
@@ -19,7 +20,6 @@ public:
     bool m_authenticated = false;
     bool m_offlineHandled = false;
     QByteArray buffer;
-    PDU*readMsg();
     MsgHandler*m_pmh;//新增成员变量
     void sendMsg(PDU*pdu);
     PDU*handleMsg(PDU*pdu);
@@ -34,6 +34,13 @@ public:
     QString m_captchaText;            //当前连接的验证码文本
     void generateCaptcha();           //生成新验证码文本
     bool verifyCaptcha(const QString &input);  //校验验证码，正确则失效
+
+private:
+    bool m_dispatching = false;
+    QElapsedTimer m_activity;
+    QElapsedTimer m_captchaAge;
+    QElapsedTimer m_lastCaptchaRequest;
+    QElapsedTimer m_lastAuthRequest;
 
 public slots:
     void recvMsg();

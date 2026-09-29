@@ -4,6 +4,9 @@
 #include "protocol.h"
 
 #include <QFile>
+#include <QSaveFile>
+#include <QElapsedTimer>
+#include <memory>
 #include <QString>
 
 
@@ -12,13 +15,15 @@ class MsgHandler
 {
 public:
     MsgHandler();
-    QFile m_fUploadFile;
-    qint64 m_iUploadFileSize;
-    qint64 m_iUploadReceivedSize;
+    QString actor;
+    std::unique_ptr<QSaveFile> m_fUploadFile;
+    qint64 m_iUploadFileSize = 0;
+    qint64 m_iUploadReceivedSize = 0;
+    QElapsedTimer m_uploadActivity;
+    void expireUpload();
     QFile m_fDownloadFile;
-    PDU *pdu;
+    PDU *pdu = nullptr;
     PDU *regist();
-    PDU *login(QString&strName);
     PDU *findUser();
     PDU*onlineUser();
     PDU*addFriend();

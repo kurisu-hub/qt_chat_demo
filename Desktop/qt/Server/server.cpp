@@ -4,13 +4,15 @@
 #include <QFile>
 #include <QDebug>
 #include <QMessageBox>
+#include <QDir>
 
 Server::Server(QWidget *parent)
     : QWidget(parent)
 {   //加载配置文件
     loadConfig();
+    if (!QDir().mkpath(m_strRootPath)) qFatal("Cannot create server storage root");
     //调用监听函数listen
-    MyTcpServer::getInstance().listen(QHostAddress(m_strIP),m_usPort);
+    if (!MyTcpServer::getInstance().listen(QHostAddress(m_strIP),m_usPort)) qFatal("Cannot listen on configured address");
 }
 
 Server::~Server()

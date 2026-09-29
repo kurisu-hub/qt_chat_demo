@@ -8,6 +8,8 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QMouseEvent>
+#include <QScopedValueRollback>
+#include <memory>
 
 Client::Client(QWidget *parent)
     : QWidget(parent)
@@ -17,6 +19,8 @@ Client::Client(QWidget *parent)
     ui->setupUi(this);
     loadConfig();
     //调用函数来获取端口号和IP地址
+    socket.setReadBufferSize(1024 * 1024);
+    connect(&socket, &QTcpSocket::disconnected, this, [this] { buffer.clear(); });
     socket.connectToHost(QHostAddress(m_strIP),m_usPort);
     //用connect函数来进行信号槽连接，当socket函数发出信号时会调用showConnect函数
     connect(&socket,&QTcpSocket::connected,this,&Client::showConnect);
@@ -39,21 +43,57 @@ Client::~Client()
     delete m_prh;
 }
 
-PDU *Client::readMsg()
+namespace {
+bool terminated(const char *text, uint size)
 {
-    qDebug()<<"socket中的总长度为:"<<socket.bytesAvailable();
-    uint uiPDULen=0;
-    socket.read((char*)&uiPDULen,sizeof(uint));
-    uint uiMsgLen=uiPDULen-sizeof(PDU);
-    PDU*pdu=mkPDU(uiMsgLen);
-    socket.read((char*)pdu+sizeof(uint),uiPDULen-sizeof(uint));
-    qDebug()<<"readMsg uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
-    return pdu;
+    return size && memchr(text, 0, size) != nullptr;
+}
+
+bool validResponse(const PDU *pdu)
+{
+    switch (pdu->uiType) {
+    case ENUM_MSG_TYPE_ONLINE_USER_RESPOND:
+    case ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND:
+    case ENUM_MSG_TYPE_FRIEND_PRESENCE_SNAPSHOT_RESPOND:
+        if (pdu->uiMsgLen % 32) return false;
+        for (uint i = 0; i < pdu->uiMsgLen; i += 32)
+            if (!terminated(pdu->caMsg + i, 32)) return false;
+        return true;
+    case ENUM_MSG_TYPE_FLUSH_FILE_RESPOND:
+        if (pdu->uiMsgLen % sizeof(FileInfo)) return false;
+        for (uint i = 0; i < pdu->uiMsgLen; i += sizeof(FileInfo))
+            if (!terminated(pdu->caMsg + i, 32)) return false;
+        return true;
+    case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:
+        return terminated(pdu->caData, 32) && terminated(pdu->caData + 32, 32);
+    case ENUM_MSG_TYPE_FRIEND_ONLINE_NOTIFY:
+    case ENUM_MSG_TYPE_FRIEND_OFFLINE_NOTIFY:
+        return terminated(pdu->caData, 32);
+    case ENUM_MSG_TYPE_SHARE_FILE_REQUEST:
+        return terminated(pdu->caData, 32) && terminated(pdu->caMsg, pdu->uiMsgLen);
+    case ENUM_MSG_TYPE_CHAT_REQUEST:
+    case ENUM_MSG_TYPE_CHAT_RESPOND:
+        // The failure response contains only an integer zero, no text body.
+        if (pdu->uiMsgLen == 0) {
+            int result = -1;
+            memcpy(&result, pdu->caData, sizeof(result));
+            return result == 0;
+        }
+        return terminated(pdu->caData, 32) && terminated(pdu->caMsg, pdu->uiMsgLen);
+    default:
+        return true; // Other payloads are numeric flags or binary data.
+    }
+}
 }
 
 void Client::handleMsg(PDU *pdu)
 {
-    qDebug()<<"readMsg uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
+    if (!validResponse(pdu)) {
+        qWarning() << "Invalid response payload";
+        buffer.clear();
+        socket.abort();
+        return;
+    }
     m_prh->pdu=pdu;
     switch(pdu->uiType)
     {
@@ -108,6 +148,7 @@ void Client::handleMsg(PDU *pdu)
         m_prh->deleteFriend();
         break;
     }
+    case ENUM_MSG_TYPE_CHAT_RESPOND:
     case ENUM_MSG_TYPE_CHAT_REQUEST:{
         m_prh->chat();
         break;
@@ -133,7 +174,11 @@ void Client::handleMsg(PDU *pdu)
         break;
     }
     case ENUM_MSG_TYPE_UPLOAD_FILE_DATA_RESPOND:{
-        Index::getInstance().getFile()->flushFile();
+        if (pdu->caData[0]) Index::getInstance().getFile()->flushFile();
+        else {
+            Index::getInstance().getFile()->cancelUpload();
+            QMessageBox::information(&Index::getInstance(), "提示", "上传失败，文件未保存");
+        }
         break;
     }
     case ENUM_MSG_TYPE_DOWNLOAD_FILE_RESPOND:
@@ -215,7 +260,6 @@ void Client::sendMsg(PDU *pdu)
 {
     //发送给服务器pdu
     socket.write((char*)pdu,pdu->uiTotalLen);
-    qDebug()<<"send uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
     free(pdu);
     pdu=NULL;
 
@@ -228,58 +272,50 @@ void Client::showConnect()
 
 void Client::recvMsg()
 {
-    //接受pdu同时注意防止沾包和半包的情况，所以用data接受，读取pdu的大小然后进行处理，这样可以用于应对多个处理请求
-    qDebug()<<"recvMsg消息的总长度"<<socket.bytesAvailable();
-    QByteArray data=socket.readAll();
-    buffer.append(data);
-    while(buffer.size()>=int(sizeof(PDU))){
-        PDU*pdu=(PDU*)buffer.data();
-        if(buffer.size()<int(pdu->uiTotalLen)){
-            break;
+    // Nested event loops may emit readyRead while a handler owns m_prh->pdu.
+    // Leave queued bytes in the socket until the outer dispatch resumes.
+    if (m_dispatching) return;
+    QScopedValueRollback<bool> guard(m_dispatching, true);
+    const uint maxFrame = 1024 * 1024;
+    for (;;) {
+        if (buffer.size() < int(sizeof(PDU)))
+            buffer.append(socket.read(int(sizeof(PDU)) - buffer.size()));
+        if (buffer.size() < int(sizeof(PDU))) return;
+        uint total = 0, message = 0;
+        memcpy(&total, buffer.constData(), sizeof(total));
+        memcpy(&message, buffer.constData() + sizeof(uint), sizeof(message));
+        if (total < sizeof(PDU) || total > maxFrame || message != total - sizeof(PDU)) {
+            buffer.clear();
+            socket.abort();
+            qWarning() << "Invalid protocol frame";
+            return;
         }
-        handleMsg(pdu);
-        //处理完了就把这一部分删除掉就行了
-        buffer.remove(0,pdu->uiTotalLen);
-
-   }
-
+        if (buffer.size() < int(total))
+            buffer.append(socket.read(int(total) - buffer.size()));
+        if (buffer.size() < int(total)) return;
+        std::unique_ptr<PDU, decltype(&free)> frame(mkPDU(message), &free);
+        memcpy(frame.get(), buffer.constData(), total);
+        buffer.remove(0, int(total));
+        handleMsg(frame.get());
+        m_prh->pdu = nullptr;
+    }
 }
-
-//void Client::on_send_PB_clicked()
-//{   //通过ui来调用input_LE函数获取内容用strMsg来记录
-//    QString strMsg=ui->input_LE->text();
-//    qDebug()<<strMsg;
-//    //用pdu的指针来记录创造的数据结构体
-//    PDU *pdu=mkPDU(strMsg.toStdString().size()+1);
-//    //用memcpy来复制这些具体的数据
-//    memcpy(pdu->caMsg,strMsg.toStdString().c_str(),strMsg.toStdString().size());
-//    //pdu的类型赋值
-//    pdu->uiType=ENUM_MSG_TYPE_REGIST_REQUEST;
-//    //用socket的write函数发送pdu的数据
-//    socket.write((char*)pdu,pdu->uiTotalLen);
-//    qDebug()<<"uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
-//    free(pdu);
-//    pdu=NULL;
-
-
-//}
 
 void Client::on_regist_PB_clicked()
 {
     QString strName=ui->name_LE->text();
     QString strPwd=ui->pwd_LE->text();
-    if(strName.isEmpty()||strPwd.isEmpty()||strName.toStdString().size()>32||strPwd.toStdString().size()>32)
+    if(!validCredential(strName) || !validCredential(strPwd))
     {
         QMessageBox::information(this,"提示","用户名或密码非法");
         return;
     }
     PDU *pdu=mkPDU();
-    memcpy(pdu->caData,strName.toStdString().c_str(),32);
+    copyTextField(pdu->caData, strName);
     m_strLoginName=strName;
-    memcpy(pdu->caData+32,strPwd.toStdString().c_str(),32);
+    copyTextField(pdu->caData+32, strPwd);
     pdu->uiType=ENUM_MSG_TYPE_REGIST_REQUEST;
     socket.write((char*)pdu,pdu->uiTotalLen);
-    qDebug()<<"send uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
     free(pdu);
     pdu=NULL;
 
@@ -292,6 +328,10 @@ void Client::on_login_PB_clicked()
 {
     QString strName=ui->name_LE->text();
     QString strPwd=ui->pwd_LE->text();
+    if (!validCredential(strName) || !validCredential(strPwd)) {
+        QMessageBox::information(this,"提示","用户名或密码非法");
+        return;
+    }
     QString strCaptcha=ui->captcha_LE->text();
     if(strCaptcha.isEmpty())
     {
@@ -300,12 +340,11 @@ void Client::on_login_PB_clicked()
     }
     this->m_strLoginName=strName;
     PDU*pdu=mkPDU(strCaptcha.toStdString().size()+1);
-    memcpy(pdu->caData,strName.toStdString().c_str(),32);
-    memcpy(pdu->caData+32,strPwd.toStdString().c_str(),32);
+    copyTextField(pdu->caData, strName);
+    copyTextField(pdu->caData+32, strPwd);
     memcpy(pdu->caMsg,strCaptcha.toStdString().c_str(),strCaptcha.toStdString().size()+1);
     pdu->uiType=ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST;
     socket.write((char*)pdu,pdu->uiTotalLen);
-    qDebug()<<"send login-with-captcha uiTotalLen:"<<pdu->uiTotalLen<<"uiMsgLen"<<pdu->uiMsgLen<<"caData"<<pdu->caData<<"uiType"<<pdu->uiType<<"caMsg"<<pdu->caMsg;
     free(pdu);
     pdu=NULL;
 }
@@ -351,7 +390,7 @@ void Client::sendHeartbeat()
 {
     PDU* pdu = mkPDU();
     pdu->uiType = ENUM_MSG_TYPE_HEARTBEAT_REQUEST;
-    memcpy(pdu->caData, m_strLoginName.toStdString().c_str(), 32);
+    copyTextField(pdu->caData, m_strLoginName);
     sendMsg(pdu);
     qDebug()<<"发送心跳包";
 }

@@ -1,0 +1,64 @@
+-- MANUAL migration; stop all old server instances and back up before applying.
+-- Select the intended database explicitly in your SQL client (normally mydb2503).
+-- This is deliberately not executed by application startup or development tools.
+ALTER TABLE user_info ADD COLUMN password_hash VARCHAR(255)
+    CHARACTER SET ascii COLLATE ascii_bin NULL DEFAULT NULL;
+
+-- REQUIRED name uniqueness preflight (read-only; run in the intended database):
+-- SHOW CREATE TABLE user_info;
+-- SELECT COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME, IS_NULLABLE,
+--        COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS
+-- WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_info'
+--   AND COLUMN_NAME = 'name';
+-- SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART
+-- FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE()
+--   AND TABLE_NAME = 'user_info' ORDER BY INDEX_NAME, SEQ_IN_INDEX;
+-- name's COLLATION_NAME must end in _ci. If not, choose an available _ci
+-- collation compatible with its existing character set (SHOW COLLATION).
+-- Manually construct ALTER TABLE user_info MODIFY COLUMN name using its exact
+-- existing definition from SHOW CREATE TABLE, changing ONLY the collation.
+-- Preserve its type/length, charset, nullability, default and other attributes;
+-- no guessed column type or blanket table conversion is supplied here.
+-- Before changing collation, check collisions by grouping name under the chosen
+-- collation; resolve them explicitly with the account owners. Stop on errors.
+-- After the collation change, this query must return no rows:
+-- SELECT name, COUNT(*) FROM user_info GROUP BY name HAVING COUNT(*) > 1;
+-- If STATISTICS does not already show a UNIQUE (NON_UNIQUE=0) index with exactly
+-- ONE row, COLUMN_NAME='name', and SUB_PART IS NULL, run this statement manually
+-- (choose another index identifier if this one is already used):
+-- ALTER TABLE user_info ADD UNIQUE INDEX uq_user_info_name (name);
+-- Composite and prefix indexes do not satisfy startup. If full indexing exceeds
+-- the server's key-length limit, explicitly resolve the schema/server limitation;
+-- do not substitute name(N). Re-run metadata checks before restarting.
+-- This enforced _ci unique index prevents concurrent case-variant registrations.
+-- The application also checks LOWER(name) explicitly before registration.
+-- Deployment assumptions: user_info.id is a primary key.
+-- Login additionally requires the returned username to match UTF-8 bytes exactly.
+-- Main must call connect(), then refuse startup unless isReady() is true.
+-- pwd is a text column accepting the empty string; do not shorten/change it.
+-- Tables use InnoDB, normal autocommit, and no triggers rewriting credentials.
+-- Keep legacy pwd unchanged until its owner successfully authenticates.
+-- Only NULL password_hash permits legacy authentication. Never reset a damaged
+-- hash to NULL: use an explicit password reset instead.
+-- Login compares legacy UTF-8 password bytes exactly (case-sensitive), then
+-- atomically writes a salted hash and clears pwd to ''. Failure rejects login.
+-- Existing passwords that only worked through case-insensitive SQL comparison
+-- must be supplied with their original case or reset.
+-- Backups still contain plaintext; manage retention/access separately.
+-- Startup checks VARCHAR(255), nullable, required account columns, name's _ci
+-- collation and the full single-column unique name index. On failure
+-- it closes the connection and all OperateDB operations fail closed; it does not
+-- terminate the server process. DDL is explicit to avoid runtime privileges,
+-- implicit MySQL commits, and accidental production schema modification.
+-- Add passwordhash.cpp/.h to the main-owned Server.pro before building.
+-- Qt 5.14.2 QtNetwork provides QPasswordDigestor::deriveKeyPbkdf2:
+-- https://github.com/qt/qtbase/blob/v5.14.2/src/network/ssl/qpassworddigestor.h
+-- Format: pbkdf2-sha256$1$600000$<16-byte salt hex>$<32-byte key hex>.
+-- Salt uses QRandomGenerator::system(); verify bounds work and compares keys
+-- without an early exit based on matching bytes. Benchmark login throughput;
+-- these synchronous KDF calls require caller-side throttling under heavy load.
+-- Online state remains owned by PresenceStore. handleOnlineUser retains its
+-- legacy SQL read for API compatibility; it must not be used for live presence.
+-- Friend eligibility is advisory. Concurrent friend inserts still require the
+-- deployment's uniqueness/serialization policy; this migration changes no
+-- friendship schema. No runtime SQL logs include passwords or password hashes.

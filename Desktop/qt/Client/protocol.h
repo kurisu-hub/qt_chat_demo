@@ -1,5 +1,29 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
+#include <QString>
+#include <QByteArray>
+#include <cstring>
+
+// Fixed wire fields always contain a complete, NUL-terminated UTF-8 prefix.
+inline void copyTextField(char *dest, const QString &text, int capacity = 32)
+{
+    if (!dest || capacity <= 0) return;
+    const QByteArray bytes = text.toUtf8();
+    int length = qMin(bytes.size(), capacity - 1);
+    if (length < bytes.size()) {
+        while (length > 0 && (static_cast<unsigned char>(bytes[length]) & 0xc0) == 0x80)
+            --length;
+    }
+    std::memset(dest, 0, capacity);
+    std::memcpy(dest, bytes.constData(), length);
+}
+
+inline bool validCredential(const QString &text)
+{
+    const QByteArray bytes = text.toUtf8();
+    return !bytes.isEmpty() && bytes.size() <= 31 && !bytes.contains(char(0));
+}
+
 typedef unsigned int uint;
 enum ENUM_MSG_TYPE
 {//消息类型的枚举，用于标识消息的类型

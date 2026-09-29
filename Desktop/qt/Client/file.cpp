@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QSet>
 File::File(QWidget *parent) :
     QWidget(parent),
       m_pFileList(),
@@ -16,6 +17,11 @@ File::File(QWidget *parent) :
     m_strCurPath=m_strUserPath=QString("%1/%2").arg(Client::getInstance().m_strPath).arg(Client::getInstance().m_strLoginName);
     qDebug()<<"1:"<<m_strCurPath<<"2:"<<m_strUserPath;
     ui->setupUi(this);
+    m_fDownloadfile.setDirectWriteFallback(false);
+    connect(&Client::getInstance().socket, &QTcpSocket::disconnected,
+            this, [this] { cancelDownload(); cancelUpload(); });
+    connect(&Client::getInstance().socket, &QTcpSocket::bytesWritten,
+            this, [this](qint64) { pumpUpload(); });
     flushFile();
       m_pShareFile=new ShareFile;
     qDebug()<<"file构造函数";
@@ -23,16 +29,26 @@ File::File(QWidget *parent) :
 
 File::~File()
 {
+    cancelDownload();
+    cancelUpload();
     initFileList();
     delete ui;
 }
 
 void File::updateFileList(QList<FileInfo *> pFileList)
 {
-    // 如果传进来的就是 m_pFileList 本身，先做一份浅拷贝，避免 initFileList 把它删空
-       QList<FileInfo*> listCopy = pFileList;
-
-       initFileList();          // 这里会 delete 掉 m_pFileList 里的旧对象
+    // Retain incoming pointers even when the caller passes our own list.
+       QList<FileInfo*> listCopy;
+       QSet<FileInfo*> incoming;
+       for (FileInfo *info : pFileList) {
+           if (info && !incoming.contains(info)) {
+               incoming.insert(info);
+               listCopy.append(info);
+           }
+       }
+       const QSet<FileInfo*> previous(m_pFileList.begin(), m_pFileList.end());
+       for (FileInfo *info : previous)
+           if (!incoming.contains(info)) delete info;
        ui->listWidget->clear();
 
        foreach (FileInfo* pFileInfo, listCopy) {
@@ -73,22 +89,43 @@ void File::flushFile()
 
 void File::UploadFile()
 {
-    QFile file(m_strUploadPath);
-    file.open(QIODevice::ReadOnly);
-    while(true){
-        PDU*pdu=mkPDU(4096);
-        qint64 ret=file.read(pdu->caMsg,4096);
-        if(ret<0){
-            QMessageBox::information(this,"提示","上传文件失败");
+    if (!m_uploadPending) return;
+    m_fUploadfile.setFileName(m_strUploadPath);
+    if (!m_fUploadfile.open(QIODevice::ReadOnly)) {
+        m_uploadPending = false;
+        QMessageBox::information(this,"提示","上传文件失败");
+        return;
+    }
+    pumpUpload();
+}
+
+void File::pumpUpload()
+{
+    if (!m_uploadPending || !m_fUploadfile.isOpen()) return;
+    while (Client::getInstance().socket.bytesToWrite() < 256 * 1024) {
+        const QByteArray chunk = m_fUploadfile.read(64 * 1024);
+        if (chunk.isEmpty()) {
+            if (!m_fUploadfile.atEnd()) {
+                const QString error = m_fUploadfile.errorString();
+                cancelUpload();
+                QMessageBox::information(this, "提示", QString("上传读取失败：%1").arg(error));
+                return;
+            }
+            m_fUploadfile.close();
+            m_uploadPending = false;
             return;
         }
-        if(ret==0)break;
+        PDU *pdu = mkPDU(chunk.size());
+        memcpy(pdu->caMsg, chunk.constData(), chunk.size());
         pdu->uiType=ENUM_MSG_TYPE_UPLOAD_FILE_DATA_REQUEST;
-        pdu->uiMsgLen=ret;
-        pdu->uiTotalLen=ret+sizeof(PDU);
         Client::getInstance().sendMsg(pdu);
     }
-    file.close();
+}
+
+void File::cancelUpload()
+{
+    if (m_fUploadfile.isOpen()) m_fUploadfile.close();
+    m_uploadPending = false;
 }
 
 void File::initFileList()
@@ -109,14 +146,12 @@ void File::on_mkDir_PB_clicked()
 {
     QString strFileName=QInputDialog::getText(this,"创建文件","文件名");
     qDebug()<<"strFileName"<<strFileName;
-    if(strFileName.isEmpty()||strFileName.toStdString().size()>32){
+    if(strFileName.isEmpty()||strFileName.toUtf8().size()>31){
         QMessageBox::information(&Client::getInstance(),"提示","文件名非法");
         return;
     }
     PDU*pdu=mkPDU(m_strCurPath.toStdString().size()+1);
-    char caName[32] = {0};
-    strncpy(caName, strFileName.toStdString().c_str(), sizeof(caName) - 1);
-    memcpy(pdu->caData, caName, 32);
+    copyTextField(pdu->caData, strFileName);
     memcpy(pdu->caMsg,m_strCurPath.toStdString().c_str(),m_strCurPath.toStdString().size());
     pdu->uiType=ENUM_MSG_TYPE_CREATE_FILE_REQUEST;
     Client::getInstance().sendMsg(pdu);
@@ -134,19 +169,19 @@ void File::on_delFile_PB_clicked()
     if(!pItem){
         return;
     }
-    int ret=QMessageBox::question(this,"删除文件",QString("是否删除文件%1").arg(pItem->text()));
+    const QString selectedName = pItem->text();
+    const QString selectedPath = QString("%1/%2").arg(m_strCurPath).arg(selectedName);
+    uint selectedType = 0;
+    for (const FileInfo *info : m_pFileList)
+        if (selectedName == info->caName) selectedType = info->uiType;
+    int ret=QMessageBox::question(this,"删除文件",QString("是否删除文件%1").arg(selectedName));
     if(ret!=QMessageBox::Yes)return;
     else{
-        QString strPath=QString("%1/%2").arg(this->m_strCurPath).arg(pItem->text());
+        QString strPath=selectedPath;
         PDU*pdu=mkPDU(strPath.toStdString().size()+1);
         memcpy(pdu->caMsg,strPath.toStdString().c_str(),strPath.toStdString().size());
         pdu->uiType=ENUM_MSG_TYPE_DEL_FILE_REQUEST;
-        foreach(FileInfo*pFileInfo,m_pFileList){
-            if(pItem->text()==pFileInfo->caName){
-                qDebug()<<"pFileInfo->caName"<<pFileInfo->caName;
-                memcpy(pdu->caData,&pFileInfo->uiType,sizeof(uint));
-            }
-        }
+        memcpy(pdu->caData, &selectedType, sizeof(selectedType));
         Client::getInstance().sendMsg(pdu);
     }
 }
@@ -157,19 +192,19 @@ void File::on_rename_PB_clicked()
     if(!pItem){
         return;
     }
+     const QString parentPath = m_strCurPath;
+     const QString oldPath = QString("%1/%2").arg(parentPath).arg(pItem->text());
      QString strFileName=QInputDialog::getText(this,"创建文件","文件名");
-     if(strFileName.isEmpty()||strFileName.toStdString().size()>32){
+     if(strFileName.isEmpty()||strFileName.toUtf8().size()>31){
          QMessageBox::information(&Client::getInstance(),"提示","文件名非法");
          return;
      }
-     QString oldPath=QString("%1/%2").arg(this->m_strCurPath).arg(pItem->text());
-     QString newPath=QString("%1/%2").arg(this->m_strCurPath).arg(strFileName);
-     PDU*pdu=mkPDU();
-     char caOld[32] = {0}, caNew[32] = {0};
-     strncpy(caOld, oldPath.toStdString().c_str(), sizeof(caOld) - 1);
-     strncpy(caNew, newPath.toStdString().c_str(), sizeof(caNew) - 1);
-     memcpy(pdu->caData, caOld, 32);
-     memcpy(pdu->caData + 32, caNew, 32);
+     QString newPath=QString("%1/%2").arg(parentPath).arg(strFileName);
+     const QByteArray oldBytes = oldPath.toUtf8();
+     const QByteArray newBytes = newPath.toUtf8();
+     PDU*pdu=mkPDU(oldBytes.size() + newBytes.size() + 2);
+     memcpy(pdu->caMsg, oldBytes.constData(), oldBytes.size() + 1);
+     memcpy(pdu->caMsg + oldBytes.size() + 1, newBytes.constData(), newBytes.size() + 1);
      pdu->uiType=ENUM_MSG_TYPE_RENAME_FILE_REQUEST;
      Client::getInstance().sendMsg(pdu);
 }
@@ -195,23 +230,35 @@ void File::on_return_PB_clicked()
 
 void File::on_upload_PB_clicked()
 {
+    if (m_uploadPending) return;
     m_strUploadPath = QFileDialog::getOpenFileName();
        if (m_strUploadPath.isEmpty()) return;   // 用户取消选择时直接返回
 
        qDebug() << "m_strUploadPath" << m_strUploadPath;
        QFile file(m_strUploadPath);
+       if (!file.open(QIODevice::ReadOnly)) {
+           QMessageBox::information(this, "提示", "无法打开上传文件");
+           return;
+       }
        qint64 iFileSize = file.size();
+       if (iFileSize < 0 || iFileSize > qint64(1024) * 1024 * 1024) {
+           QMessageBox::information(this, "提示", "上传文件不能超过1 GiB");
+           return;
+       }
 
        std::string strCurPath = m_strCurPath.toStdString();
        QString strFileName = QFileInfo(m_strUploadPath).fileName(); // 只要文件名，不要整个本地路径
-       std::string strFileNameStd = strFileName.toStdString();
 
+
+       if (strFileName.toUtf8().size() > 31) {
+           QMessageBox::information(this, "提示", "上传文件名不能超过31个UTF-8字节");
+           return;
+       }
+       m_uploadPending = true;
        PDU* pdu = mkPDU(strCurPath.size() + 1);
 
        // caData 前32字节放文件名，清零后再拷贝，防止越界读
-       char caFileName[32] = {0};
-       strncpy(caFileName, strFileNameStd.c_str(), sizeof(caFileName) - 1);
-       memcpy(pdu->caData, caFileName, 32);
+       copyTextField(pdu->caData, strFileName);
        memcpy(pdu->caData + 32, &iFileSize, sizeof(qint64));
 
        // caMsg 拷贝 m_strCurPath，长度用它自己的长度，不要用 m_strUploadPath 的
@@ -221,36 +268,42 @@ void File::on_upload_PB_clicked()
        Client::getInstance().sendMsg(pdu);
 }
 
+void File::cancelDownload()
+{
+    if (m_fDownloadfile.isOpen()) {
+        m_fDownloadfile.cancelWriting();
+        // commit closes and discards a cancelled QSaveFile; it cannot replace the target.
+        m_fDownloadfile.commit();
+    }
+    m_downloadPending = false;
+}
+
 void File::on_download_PB_clicked()
 {
-    QListWidgetItem* pItem=ui->listWidget->currentItem();
-
-        if(!pItem)
-        {
-            return;
-        }
-
-
-        QString strFilePath=
-                QString("%1/%2")
-                .arg(m_strCurPath)
-                .arg(pItem->text());
-
-
-        PDU*pdu=mkPDU(strFilePath.toStdString().size()+1);
-
-
-        memcpy(pdu->caMsg,
-               strFilePath.toStdString().c_str(),
-               strFilePath.toStdString().size());
-
-
-        pdu->uiType=
-            ENUM_MSG_TYPE_DOWNLOAD_FILE_REQUEST;
-
-
-        Client::getInstance().sendMsg(pdu);
-
+    if (m_downloadPending) return;
+    QListWidgetItem *item = ui->listWidget->currentItem();
+    if (!item || Client::getInstance().socket.state() != QAbstractSocket::ConnectedState)
+        return;
+    const QByteArray remotePath = QString("%1/%2").arg(m_strCurPath).arg(item->text()).toUtf8();
+    // Reserve the transfer before entering the dialog's nested event loop.
+    m_downloadPending = true;
+    const QString localPath = QFileDialog::getSaveFileName(this, "保存下载文件");
+    if (!m_downloadPending) return; // disconnected while choosing a destination
+    if (localPath.isEmpty()) {
+        cancelDownload();
+        return;
+    }
+    m_fDownloadfile.setFileName(localPath);
+    if (!m_fDownloadfile.open(QIODevice::WriteOnly)) {
+        const QString error = m_fDownloadfile.errorString();
+        cancelDownload();
+        QMessageBox::information(this, "提示", QString("无法保存下载文件：%1").arg(error));
+        return;
+    }
+    PDU *request = mkPDU(remotePath.size() + 1);
+    memcpy(request->caMsg, remotePath.constData(), remotePath.size() + 1);
+    request->uiType = ENUM_MSG_TYPE_DOWNLOAD_FILE_REQUEST;
+    Client::getInstance().sendMsg(request);
 }
 
 void File::on_share_PB_clicked()
