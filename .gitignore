@@ -1,0 +1,52 @@
+# ---------- Qt Creator / qmake ----------
+*.pro.user
+*.pro.user.*
+.qmake.stash
+Makefile
+Makefile.Debug
+Makefile.Release
+*.Debug/
+*.Release/
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# ---------- 编译产物 ----------
+build-*/
+debug/
+release/
+bin/
+obj/
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.exp
+
+# ---------- 安全回归测试的构建目录 ----------
+.build-security/
+**/.build-security/
+
+# ---------- 压缩包 / 临时文件 ----------
+*.zip
+*.7z
+*.rar
+*.tmp
+*.log
+*.bak
+*~
+
+# ---------- 编辑器 / 系统文件 ----------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
