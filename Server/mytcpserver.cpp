@@ -23,13 +23,13 @@ void MyTcpServer::removeSocket(MyTcpSocket *socket)
     socket->deleteLater();
 }
 MyTcpServer &MyTcpServer::getInstance() { static MyTcpServer instance; return instance; }
-void MyTcpServer::resend(char *target, PDU *pdu)
+void MyTcpServer::resend(const char *target, PDU *pdu, const MyTcpSocket *except)
 {
     if (!target || !pdu) return;
     const QString user = QString::fromUtf8(target);
     const QList<MyTcpSocket *> sockets = m_tcpSocketList;
     for (MyTcpSocket *socket : sockets) {
-        if (socket->m_authenticated && !socket->m_offlineHandled && socket->m_strLoginName == user
+        if (socket != except && socket->m_authenticated && !socket->m_offlineHandled && socket->m_strLoginName == user
                 && socket->state() == QAbstractSocket::ConnectedState) socket->sendMsg(pdu);
     }
 }

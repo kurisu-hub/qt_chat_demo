@@ -122,13 +122,44 @@ PDU *MsgHandler::deleteFriend()
     return response(ENUM_MSG_TYPE_DELETE_FRIEND_RESPOND,
         OperateDB::getInstance().handleDeleteFriend(actor.toUtf8().constData(), pdu->caData + 32));
 }
-PDU *MsgHandler::chat()
+// 只广播首次成功提交的消息。重试也返回原消息，供发送方合并界面状态。
+PDU *MsgHandler::sendChat(MyTcpSocket *origin)
 {
-    const QString target = Security::field(pdu->caData + 32);
-    if (friends(actor, target)) {
-        Security::putField(pdu->caData, actor); forward(target, pdu); return nullptr;
+    using namespace ChatProtocol;
+    const auto request = unpack(pdu, 32 * 1024);
+    const QString peer = request.value("peer").toString();
+    Message message;
+    message.clientId = request.value("requestId").toString();
+    message.text = request.value("text").toString();
+    bool inserted = false;
+    const Result result = OperateDB::getInstance().storeChatMessage(actor, peer, message, inserted);
+    QJsonObject reply{{"peer", peer}, {"requestId", message.clientId}, {"result", int(result)}};
+    if (result == Saved) reply.insert("message", encode(message));
+    if (inserted) {
+        std::unique_ptr<PDU, decltype(&free)> notice(pack(Push, {{"peer", actor}, {"message", encode(message)}}), &free);
+        forward(peer, notice.get());
+        notice.reset(pack(Push, {{"peer", peer}, {"message", encode(message)}}));
+        QByteArray sender = actor.toUtf8();
+        MyTcpServer::getInstance().resend(sender.data(), notice.get(), origin);
     }
-    return numberResponse(ENUM_MSG_TYPE_CHAT_REQUEST, 0);
+    return pack(Ack, reply);
+}
+
+// 响应原样带回请求 ID，客户端可丢弃超时或已切换页面的旧响应。
+PDU *MsgHandler::chatHistory()
+{
+    using namespace ChatProtocol;
+    const auto request = unpack(pdu, 32 * 1024);
+    const QString peer = request.value("peer").toString();
+    QList<Message> messages;
+    bool hasMore = false;
+    const Result result = OperateDB::getInstance().chatHistory(actor, peer, readId(request.value("before")), messages, hasMore);
+    QJsonArray rows;
+    if (result == Saved) {
+        for (const Message &message : messages) rows.append(encode(message));
+    }
+    return pack(HistoryPage, {{"peer", peer}, {"requestId", request.value("requestId")},
+        {"result", int(result)}, {"hasMore", hasMore}, {"messages", rows}});
 }
 PDU *MsgHandler::createFile()
 {

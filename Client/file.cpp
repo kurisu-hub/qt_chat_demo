@@ -14,15 +14,12 @@ File::File(QWidget *parent) :
 
 {
 
-    m_strCurPath=m_strUserPath=QString("%1/%2").arg(Client::getInstance().m_strPath).arg(Client::getInstance().m_strLoginName);
-    qDebug()<<"1:"<<m_strCurPath<<"2:"<<m_strUserPath;
     ui->setupUi(this);
     m_fDownloadfile.setDirectWriteFallback(false);
     connect(&Client::getInstance().socket, &QTcpSocket::disconnected,
             this, [this] { cancelDownload(); cancelUpload(); });
     connect(&Client::getInstance().socket, &QTcpSocket::bytesWritten,
             this, [this](qint64) { pumpUpload(); });
-    flushFile();
       m_pShareFile=new ShareFile;
     qDebug()<<"file构造函数";
 }

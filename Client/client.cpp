@@ -20,21 +20,45 @@ Client::Client(QWidget *parent)
     loadConfig();
     //调用函数来获取端口号和IP地址
     socket.setReadBufferSize(1024 * 1024);
-    connect(&socket, &QTcpSocket::disconnected, this, [this] { buffer.clear(); });
-    socket.connectToHost(QHostAddress(m_strIP),m_usPort);
-    //用connect函数来进行信号槽连接，当socket函数发出信号时会调用showConnect函数
-    connect(&socket,&QTcpSocket::connected,this,&Client::showConnect);
-    connect(&socket,&QTcpSocket::readyRead,this,&Client::recvMsg);
 
     //初始化心跳定时器
     m_pHeartbeatTimer = new QTimer(this);
     connect(m_pHeartbeatTimer, &QTimer::timeout, this, &Client::sendHeartbeat);
+
+    //用connect函数来进行信号槽连接，当socket函数发出信号时会调用showConnect函数
+    connect(&socket,&QTcpSocket::connected,this,&Client::showConnect);
+    connect(&socket,&QTcpSocket::readyRead,this,&Client::recvMsg);
+    connect(&socket, &QTcpSocket::disconnected, this, [this] {
+        buffer.clear();
+        m_pHeartbeatTimer->stop();
+        ui->captcha_LB->clear();
+        ui->captcha_LB->setText("服务器未连接");
+        m_pendingLoginName.clear();
+        if (m_authenticated) {
+            m_authenticated = false;
+            Index::getInstance().getFriend()->chatDisconnected();
+            Index::getInstance().getFile()->m_pShareFile->hide();
+            Index::getInstance().hide();
+            show();
+        }
+    });
+    connect(&socket,
+            QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error),
+            this,
+            [this](QAbstractSocket::SocketError) {
+                ui->captcha_LB->clear();
+                ui->captcha_LB->setText("服务器未连接");
+            });
 
     //点击验证码图片可刷新验证码
     ui->captcha_LB->installEventFilter(this);
 
     //启动后自动请求一张验证码
     connect(&socket, &QTcpSocket::connected, this, &Client::requestCaptcha);
+
+    //先连接信号再发起连接，避免本机连接过快时漏掉 connected 信号
+    ui->captcha_LB->setText("正在连接...");
+    socket.connectToHost(QHostAddress(m_strIP),m_usPort);
 }
 
 Client::~Client()
@@ -149,8 +173,16 @@ void Client::handleMsg(PDU *pdu)
         break;
     }
     case ENUM_MSG_TYPE_CHAT_RESPOND:
-    case ENUM_MSG_TYPE_CHAT_REQUEST:{
-        m_prh->chat();
+    case ENUM_MSG_TYPE_CHAT_REQUEST:
+        // 旧端协议号保留，新聊天使用带确认和历史的独立消息类型。
+        break;
+    case ChatProtocol::Ack:
+    case ChatProtocol::Push:
+    case ChatProtocol::HistoryPage: {
+        if (isAuthenticated()) {
+            const auto reply = ChatProtocol::unpack(pdu, 1024 * 1024 - sizeof(PDU));
+            if (!reply.isEmpty()) Index::getInstance().getFriend()->receiveChat(pdu->uiType, reply);
+        }
         break;
     }
     case ENUM_MSG_TYPE_CREATE_FILE_RESPOND:{
@@ -256,13 +288,15 @@ void Client:: loadConfig(){
 
 }
 
-void Client::sendMsg(PDU *pdu)
+// 接管并释放帧。返回值只表示完整帧进入 socket，业务成功以各自的响应为准。
+bool Client::sendMsg(PDU *pdu)
 {
-    //发送给服务器pdu
-    socket.write((char*)pdu,pdu->uiTotalLen);
+    const qint64 size = pdu->uiTotalLen;
+    const qint64 queued = socket.state() == QAbstractSocket::ConnectedState
+        ? socket.write(reinterpret_cast<const char *>(pdu), size) : -1;
     free(pdu);
-    pdu=NULL;
-
+    if (queued >= 0 && queued != size) socket.abort();
+    return queued == size;
 }
 
 void Client::showConnect()
@@ -303,6 +337,7 @@ void Client::recvMsg()
 
 void Client::on_regist_PB_clicked()
 {
+    if (!m_pendingLoginName.isEmpty()) return;
     QString strName=ui->name_LE->text();
     QString strPwd=ui->pwd_LE->text();
     if(!validCredential(strName) || !validCredential(strPwd))
@@ -312,7 +347,6 @@ void Client::on_regist_PB_clicked()
     }
     PDU *pdu=mkPDU();
     copyTextField(pdu->caData, strName);
-    m_strLoginName=strName;
     copyTextField(pdu->caData+32, strPwd);
     pdu->uiType=ENUM_MSG_TYPE_REGIST_REQUEST;
     socket.write((char*)pdu,pdu->uiTotalLen);
@@ -326,6 +360,7 @@ void Client::on_regist_PB_clicked()
 
 void Client::on_login_PB_clicked()
 {
+    if (!m_pendingLoginName.isEmpty() || isAuthenticated()) return;
     QString strName=ui->name_LE->text();
     QString strPwd=ui->pwd_LE->text();
     if (!validCredential(strName) || !validCredential(strPwd)) {
@@ -338,19 +373,49 @@ void Client::on_login_PB_clicked()
         QMessageBox::information(this,"提示","请输入验证码");
         return;
     }
-    this->m_strLoginName=strName;
+    m_pendingLoginName = strName;
     PDU*pdu=mkPDU(strCaptcha.toStdString().size()+1);
     copyTextField(pdu->caData, strName);
     copyTextField(pdu->caData+32, strPwd);
     memcpy(pdu->caMsg,strCaptcha.toStdString().c_str(),strCaptcha.toStdString().size()+1);
     pdu->uiType=ENUM_MSG_TYPE_LOGIN_WITH_CAPTCHA_REQUEST;
-    socket.write((char*)pdu,pdu->uiTotalLen);
-    free(pdu);
-    pdu=NULL;
+    if (!sendMsg(pdu)) {
+        m_pendingLoginName.clear();
+        requestCaptcha();
+    }
+}
+
+void Client::finishLogin(bool success)
+{
+    const QString account = m_pendingLoginName;
+    m_pendingLoginName.clear();
+    if (!success || account.isEmpty()) return;
+    m_strLoginName = account;
+    m_authenticated = true;
+    auto &index = Index::getInstance();
+    index.setWindowTitle(QStringLiteral("Qt 聊天 · %1").arg(account));
+    index.getFriend()->startChatSession(account);
+    File *filePage = index.getFile();
+    filePage->updateFileList({});
+    filePage->m_strCurPath = filePage->m_strUserPath = m_strPath + '/' + account;
+    filePage->flushFile();
+    index.show();
+    hide();
+    startHeartbeat();
+    requestFriendPresenceSnapshot();
 }
 
 void Client::requestCaptcha()
 {
+    if (socket.state() != QAbstractSocket::ConnectedState) {
+        ui->captcha_LB->clear();
+        ui->captcha_LB->setText("正在连接...");
+        if (socket.state() == QAbstractSocket::UnconnectedState)
+            socket.connectToHost(QHostAddress(m_strIP), m_usPort);
+        return;
+    }
+    ui->captcha_LB->clear();
+    ui->captcha_LB->setText("正在加载...");
     PDU*pdu=mkPDU();
     pdu->uiType=ENUM_MSG_TYPE_CAPTCHA_REQUEST;
     sendMsg(pdu);
@@ -358,7 +423,12 @@ void Client::requestCaptcha()
 
 void Client::setCaptchaImage(const QPixmap &pixmap)
 {
-    ui->captcha_LB->setPixmap(pixmap);
+    if (pixmap.isNull()) {
+        ui->captcha_LB->clear();
+        ui->captcha_LB->setText("验证码加载失败");
+    } else {
+        ui->captcha_LB->setPixmap(pixmap);
+    }
     //清空输入框，要求用户输入新验证码
     ui->captcha_LE->clear();
 }

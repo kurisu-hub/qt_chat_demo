@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QSqlDatabase>
 #include <QStringList>
+#include "../Shared/chatprotocol.h"
 
 class OperateDB : public QObject
 {
@@ -25,6 +26,10 @@ public:
     QStringList handleFlushFriend(const char *caName);
     bool handleDeleteFriend(const char *caCurName, const char *caTarName);
     int isFriend(const char *caCurName, const char *caTarName);
+    ChatProtocol::Result storeChatMessage(const QString &actor, const QString &peer,
+        ChatProtocol::Message &message, bool &inserted);
+    ChatProtocol::Result chatHistory(const QString &actor, const QString &peer, qint64 before,
+        QList<ChatProtocol::Message> &messages, bool &hasMore);
 private:
     explicit OperateDB(QObject *parent = nullptr);
     OperateDB(const OperateDB &) = delete;

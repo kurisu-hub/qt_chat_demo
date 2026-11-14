@@ -29,6 +29,7 @@ SOURCES += \
     server.cpp
 
 HEADERS += \
+    ../Shared/chatprotocol.h \
     security.h \
     passwordhash.h \
     captchacode.h \

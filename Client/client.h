@@ -36,7 +36,9 @@ public:
     void loadConfig();
     //创建一个实列socket
     QTcpSocket socket;
-    void sendMsg(PDU*pdu);
+    bool sendMsg(PDU *pdu);
+    bool isAuthenticated() const { return m_authenticated && socket.state() == QAbstractSocket::ConnectedState; }
+    void finishLogin(bool success);
 
     //心跳检测相关
     QTimer* m_pHeartbeatTimer;  //心跳定时器
@@ -62,6 +64,8 @@ private slots:
 
 private:
     bool m_dispatching = false;
+    bool m_authenticated = false;
+    QString m_pendingLoginName;
     Ui::Client *ui;
     //将构造函数私有化，这是为了实现单例
     Client(QWidget *parent = nullptr);

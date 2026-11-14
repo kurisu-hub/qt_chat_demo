@@ -26,16 +26,8 @@ void ResHandler::regist()
 void ResHandler::login()
 {
     const bool ret = pdu->caData[0] != 0;
-    if (ret)
-    {
-        Index::getInstance().show();
-        //隐藏登录界面
-        Client::getInstance().hide();
-        //登录成功后启动心跳检测
-        Client::getInstance().startHeartbeat();
-        Client::getInstance().requestFriendPresenceSnapshot();
-    }
-    else
+    Client::getInstance().finishLogin(ret);
+    if (!ret)
     {
          QMessageBox::information(&Client::getInstance(),"提示","登录失败");
     }
@@ -55,16 +47,8 @@ void ResHandler::loginWithCaptcha()
 {
     int ret;
     memcpy(&ret,pdu->caData,sizeof(int));
-    if (ret == 1)
-    {
-        Index::getInstance().show();
-        //隐藏登录界面
-        Client::getInstance().hide();
-        //登录成功后启动心跳检测
-        Client::getInstance().startHeartbeat();
-        Client::getInstance().requestFriendPresenceSnapshot();
-    }
-    else
+    Client::getInstance().finishLogin(ret == 1);
+    if (ret != 1)
     {
         //验证码一次性失效，密码错误时同样需要刷新验证码
         if (ret == -1)
@@ -201,30 +185,6 @@ void ResHandler::deleteFriend()
         QMessageBox::information(&Index::getInstance(),"提示","删除好友失败");
     }
 
-}
-
-void ResHandler::chat()
-{
-    int ret;
-    memcpy(&ret,pdu->caData,sizeof(int));
-    qDebug()<<"登录名"<<Client::getInstance().m_strLoginName<<"ret"<<ret;
-    qDebug() << "ret的数值：" << static_cast<int>(ret);
-    if(pdu->uiMsgLen == 0 && ret==0){
-        qDebug()<<"登录名"<<Client::getInstance().m_strLoginName;
-        QMessageBox::information(&Index::getInstance(),"提示","对方不是你好友，请添加好友再聊天");
-        Index::getInstance().getFriend()->m_pChat->isHidden();
-        Index::getInstance().getFriend()->flushfriend();
-        return;
-    }
-    char caChatName[32]={'\0'};
-    memcpy(caChatName,pdu->caData,32);
-    Chat* c=Index::getInstance().getFriend()->m_pChat;
-    c->appendAlignedColoredText(c->getshow_LE(),QString("%1:%2").arg(caChatName).arg(pdu->caMsg),Qt::AlignLeft,Qt::black);
-    //c->updateShow_TE(QString("%1:%2").arg(caChatName).arg(pdu->caMsg));
-    if(c->isHidden()){
-        c->show();
-    }
-    c->m_strChatName=caChatName;
 }
 
 void ResHandler::createFile()

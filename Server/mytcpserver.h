@@ -15,7 +15,7 @@ public:
     void incomingConnection(qintptr handle) override;
     void removeSocket(MyTcpSocket*mysocket);
     static MyTcpServer& getInstance();
-    void resend(char*turcaName,PDU*pdu);
+    void resend(const char *target, PDU *pdu, const MyTcpSocket *except = nullptr);
     void notifyFriendsPresence(const QString &userName, bool online, quint8 reason);
     void userOffline(MyTcpSocket *socket, quint8 reason);
 

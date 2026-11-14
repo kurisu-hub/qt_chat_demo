@@ -83,7 +83,12 @@ PDU *MyTcpSocket::handleMsg(PDU *pdu)
     case ENUM_MSG_TYPE_ADD_FRIEND_AGREE_REQUEST: return m_pmh->addfriendAgree();
     case ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST: return m_pmh->flushFriend();
     case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST: return m_pmh->deleteFriend();
-    case ENUM_MSG_TYPE_CHAT_REQUEST: return m_pmh->chat();
+    case ChatProtocol::Send: return m_pmh->sendChat(this);
+    case ChatProtocol::History: return m_pmh->chatHistory();
+    case ENUM_MSG_TYPE_CHAT_REQUEST: {
+        // 旧客户端无法理解持久化确认，返回其原有失败响应，避免无记录转发。
+        PDU *reply = mkPDU(); reply->uiType = ENUM_MSG_TYPE_CHAT_RESPOND; return reply;
+    }
     case ENUM_MSG_TYPE_CREATE_FILE_REQUEST: return m_pmh->createFile();
     case ENUM_MSG_TYPE_FLUSH_FILE_REQUEST: return m_pmh->flushFile();
     case ENUM_MSG_TYPE_DEL_FILE_REQUEST: return m_pmh->delFile();

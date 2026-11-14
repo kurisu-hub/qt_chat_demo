@@ -15,6 +15,7 @@
 #include "security.h"
 #include "passwordhash.h"
 #include "presencestore.h"
+#include "../../../Shared/chatprotocol.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -409,6 +410,121 @@ private slots:
             QCOMPARE(header.uiType, uint(ENUM_MSG_TYPE_HEARTBEAT_RESPOND)); QVERIFY(Security::validHeader(header.uiTotalLen, header.uiMsgLen));
         }
         QCOMPARE(peer->buffer.size(), 0);
+    }
+
+    void persistentChatThroughTcp()
+    {
+        using namespace ChatProtocol;
+        auto &db = OperateDB::getInstance();
+        QSqlQuery q(db.m_db);
+        QVERIFY(q.exec("CREATE TABLE chat_conversations(id INTEGER PRIMARY KEY, user_low INTEGER, "
+                       "user_high INTEGER, UNIQUE(user_low, user_high))"));
+        QVERIFY(q.exec("CREATE TABLE chat_messages(id INTEGER PRIMARY KEY, conversation_id INTEGER, sender_id INTEGER, "
+                       "client_id TEXT, body BLOB, created_ms INTEGER, UNIQUE(sender_id, client_id))"));
+        QVERIFY(db.handleAddFriendAgree("alice", "bob"));
+        QVERIFY(db.handleAddFriendAgree("alice", "carol"));
+
+        auto &server = MyTcpServer::getInstance();
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        QTcpSocket aliceClient, bobClient;
+        aliceClient.connectToHost(QHostAddress::LocalHost, server.serverPort());
+        QTRY_COMPARE(server.findChildren<MyTcpSocket *>().size(), 1);
+        auto *alicePeer = server.findChild<MyTcpSocket *>();
+        alicePeer->m_authenticated = true;
+        alicePeer->m_strLoginName = "alice";
+
+        const auto newId = [] { return QUuid::createUuid().toString(QUuid::WithoutBraces); };
+        const auto sendPacket = [](QTcpSocket &client, Type type, const QJsonObject &request) {
+            const Packet p(pack(type, request), &free);
+            return client.write(wire(p)) == p->uiTotalLen;
+        };
+        const auto readPacket = [](QTcpSocket &client, Type type) {
+            PDU header{};
+            QElapsedTimer clock;
+            clock.start();
+            while (clock.elapsed() < 3000) {
+                if (client.peek(reinterpret_cast<char *>(&header), sizeof(PDU)) == sizeof(PDU)
+                        && Security::validHeader(header.uiTotalLen, header.uiMsgLen)
+                        && client.bytesAvailable() >= header.uiTotalLen) {
+                    const Packet p(mkPDU(header.uiMsgLen), &free);
+                    if (client.read(reinterpret_cast<char *>(p.get()), header.uiTotalLen) != header.uiTotalLen
+                            || p->uiType != type) return QJsonObject{};
+                    return unpack(p.get(), Security::MaxFrame);
+                }
+                QTest::qWait(5);
+            }
+            return QJsonObject{};
+        };
+        const auto resultOf = [](const QJsonObject &reply) { return reply.value("result").toInt(-1); };
+        const QString offlineId = newId();
+        const QString offlineText = QStringLiteral("离线消息 😀");
+        QJsonObject request{{"peer", "bob"}, {"requestId", offlineId}, {"text", offlineText}};
+        QVERIFY(sendPacket(aliceClient, Send, request));
+        const auto saved = readPacket(aliceClient, Ack);
+        QCOMPARE(resultOf(saved), int(Saved));
+        QCOMPARE(saved.value("requestId").toString(), offlineId);
+        Message first;
+        QVERIFY(decode(saved.value("message").toObject(), first));
+        QCOMPARE(first.text, offlineText);
+
+        bobClient.connectToHost(QHostAddress::LocalHost, server.serverPort());
+        QTRY_COMPARE(server.findChildren<MyTcpSocket *>().size(), 2);
+        auto *bobPeer = server.findChildren<MyTcpSocket *>().last();
+        QVERIFY(bobPeer != alicePeer);
+        bobPeer->m_authenticated = true;
+        bobPeer->m_strLoginName = "bob";
+        QVERIFY(sendPacket(aliceClient, Send, request));
+        QCOMPARE(readPacket(aliceClient, Ack), saved);
+        request.insert("peer", "carol");
+        QVERIFY(sendPacket(aliceClient, Send, request));
+        QCOMPARE(resultOf(readPacket(aliceClient, Ack)), int(Conflict));
+        request.insert("peer", "bob");
+        request.insert("text", "different body");
+        QVERIFY(sendPacket(aliceClient, Send, request));
+        QCOMPARE(resultOf(readPacket(aliceClient, Ack)), int(Conflict));
+
+        for (int i = 0; i < PageSize; ++i) {
+            QVERIFY(sendPacket(aliceClient, Send, {{"peer", "bob"}, {"requestId", newId()}, {"text", QString::number(i)}}));
+            const auto ack = readPacket(aliceClient, Ack);
+            QCOMPARE(resultOf(ack), int(Saved));
+            const auto push = readPacket(bobClient, Push);
+            QCOMPARE(push.value("peer").toString(), QString("alice"));
+            QCOMPARE(push.value("message"), ack.value("message"));
+        }
+        QVERIFY(sendPacket(bobClient, History, {{"peer", "alice"}, {"requestId", newId()}, {"before", "0"}}));
+        const auto latest = readPacket(bobClient, HistoryPage);
+        QCOMPARE(resultOf(latest), int(Saved));
+        QVERIFY(latest.value("hasMore").toBool());
+        const auto recent = latest.value("messages").toArray();
+        QCOMPARE(recent.size(), PageSize);
+        const QString before = recent.at(0).toObject().value("id").toString();
+
+        // 拉完第一页再插新消息，旧页仍以原边界为准。
+        QVERIFY(sendPacket(aliceClient, Send, {{"peer", "bob"}, {"requestId", newId()}, {"text", "newer"}}));
+        QCOMPARE(resultOf(readPacket(aliceClient, Ack)), int(Saved));
+        QVERIFY(!readPacket(bobClient, Push).isEmpty());
+        QVERIFY(sendPacket(bobClient, History, {{"peer", "alice"}, {"requestId", newId()}, {"before", before}}));
+        const auto older = readPacket(bobClient, HistoryPage);
+        QCOMPARE(resultOf(older), int(Saved));
+        QVERIFY(!older.value("hasMore").toBool());
+        QCOMPARE(older.value("messages").toArray(), QJsonArray{encode(first)});
+
+        QVERIFY(sendPacket(bobClient, History, {{"peer", "carol"}, {"requestId", newId()}, {"before", "0"}}));
+        QCOMPARE(resultOf(readPacket(bobClient, HistoryPage)), int(Forbidden));
+        QVERIFY(db.handleDeleteFriend("alice", "bob"));
+        QVERIFY(sendPacket(bobClient, Send, {{"peer", "alice"}, {"requestId", newId()}, {"text", "blocked"}}));
+        QCOMPARE(resultOf(readPacket(bobClient, Ack)), int(Forbidden));
+        QVERIFY(sendPacket(bobClient, History, {{"peer", "alice"}, {"requestId", newId()}, {"before", before}}));
+        QCOMPARE(readPacket(bobClient, HistoryPage).value("messages").toArray(), QJsonArray{encode(first)});
+        QVERIFY(q.exec("SELECT COUNT(*) FROM chat_messages"));
+        QVERIFY(q.next());
+        QCOMPARE(q.value(0).toInt(), PageSize + 2);
+        q.finish();
+        QVERIFY(q.exec("DROP TABLE chat_messages"));
+        QVERIFY(sendPacket(bobClient, History, {{"peer", "alice"}, {"requestId", newId()}, {"before", before}}));
+        QCOMPARE(resultOf(readPacket(bobClient, HistoryPage)), int(StorageError));
+        QVERIFY(sendPacket(aliceClient, Send, {{"peer", "carol"}, {"requestId", newId()}, {"text", "cannot save"}}));
+        QCOMPARE(resultOf(readPacket(aliceClient, Ack)), int(StorageError));
     }
     void tcpRejectsMalformedAndUnauthorized_data()
     {

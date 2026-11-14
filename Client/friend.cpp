@@ -12,8 +12,6 @@ Friend::Friend(QWidget *parent) :
 {   //在构造函数里面调用刷新函数
     ui->setupUi(this);
     m_pOnlineUser=new OnlineUser;
-    m_pChat=new Chat;
-    flushfriend();
 
 }
 
@@ -26,7 +24,6 @@ Friend::~Friend()
 {
     delete ui;
     delete m_pOnlineUser;
-    delete m_pChat;
 }
 //用于刷新好友列表的，传参为好友数组
 void Friend::flushFriend_LW(QStringList friendList)
@@ -129,8 +126,42 @@ void Friend::on_chat_PB_clicked()
     if(!pItem){
         return;
     }
-    m_pChat->m_strChatName=pItem->data(Qt::UserRole).toString();
-    if(m_pChat->isHidden()){
-        m_pChat->show();
+    chatFor(pItem->data(Qt::UserRole).toString())->open();
+}
+
+Chat *Friend::chatFor(const QString &peer)
+{
+    Chat *&chat = m_chats[peer];
+    if (!chat) chat = new Chat(peer, m_chatOwner, this);
+    return chat;
+}
+
+// 同一账号重新登录可继续确认待发记录，换账号则销毁之前账号的会话和草稿。
+void Friend::startChatSession(const QString &owner)
+{
+    if (owner != m_chatOwner) {
+        qDeleteAll(m_chats);
+        m_chats.clear();
+        m_chatOwner = owner;
+        ui->listwidget->clear();
+        m_onlineFriends.clear();
     }
+    for (Chat *chat : m_chats) chat->connectionChanged();
+    flushfriend();
+}
+
+void Friend::chatDisconnected()
+{
+    for (Chat *chat : m_chats) chat->connectionChanged();
+    applyPresenceSnapshot({});
+    m_pOnlineUser->hide();
+}
+
+void Friend::receiveChat(uint type, const QJsonObject &reply)
+{
+    const QString peer = reply.value("peer").toString();
+    if (!validCredential(peer) || peer == m_chatOwner) return;
+    // 收到来信时只更新所属窗口的数据。打开窗口和输入焦点由用户决定。
+    Chat *chat = type == ChatProtocol::Push ? chatFor(peer) : m_chats.value(peer);
+    if (chat) chat->receive(type, reply);
 }

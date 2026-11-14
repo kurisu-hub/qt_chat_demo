@@ -22,7 +22,6 @@ public:
     void addFriendAgree();
     void flushFriend();
     void deleteFriend();
-    void chat();
     void createFile();
     void flushFile();
     void delFile();

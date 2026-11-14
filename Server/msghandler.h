@@ -9,6 +9,7 @@
 #include <memory>
 #include <QString>
 
+class MyTcpSocket;
 
 
 class MsgHandler
@@ -30,7 +31,8 @@ public:
     PDU*addfriendAgree();
     PDU*flushFriend();
     PDU*deleteFriend();
-    PDU*chat();
+    PDU *sendChat(MyTcpSocket *origin);
+    PDU *chatHistory();
     PDU*createFile();
     PDU*flushFile();
     PDU*delFile();

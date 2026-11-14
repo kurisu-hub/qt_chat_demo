@@ -15,17 +15,19 @@
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
-    <widget class="QTextEdit" name="show_TE">
-     <property name="font">
-      <font>
-       <family>Arial</family>
-       <pointsize>18</pointsize>
-      </font>
-     </property>
-     <property name="readOnly">
-      <bool>true</bool>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="historyLayout">
+     <item>
+      <widget class="QPushButton" name="history_PB">
+       <property name="text"><string>加载历史</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="status_LB"/>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QListWidget" name="show_TE"/>
    </item>
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
@@ -37,6 +39,11 @@
          <pointsize>18</pointsize>
         </font>
        </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="retry_PB">
+       <property name="text"><string>重试选中消息</string></property>
       </widget>
      </item>
      <item>

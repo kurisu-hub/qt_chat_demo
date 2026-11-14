@@ -28,6 +28,7 @@ SOURCES += \
     sharefile.cpp
 
 HEADERS += \
+    ../Shared/chatprotocol.h \
     chat.h \
     client.h \
     file.h \

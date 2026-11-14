@@ -1,4 +1,5 @@
 #include "security.h"
+#include "../Shared/chatprotocol.h"
 #include <QDir>
 #include <QFileInfo>
 #include <cstring>
@@ -104,6 +105,17 @@ bool Security::validRequest(const PDU *p)
         return p->uiMsgLen == 0 && name(p->caData);
     case ENUM_MSG_TYPE_CHAT_REQUEST:
         return name(p->caData + 32) && bodyText(p);
+    case ChatProtocol::Send:
+    case ChatProtocol::History: {
+        const auto request = ChatProtocol::unpack(p, 32 * 1024);
+        const QString peer = request.value("peer").toString();
+        if (peer.toUtf8().size() > 31 || !validName(peer)) return false;
+        const QString requestId = request.value("requestId").toString();
+        if (!ChatProtocol::validClientId(requestId)) return false;
+        return p->uiType == ChatProtocol::Send
+            ? ChatProtocol::validText(request.value("text").toString())
+            : ChatProtocol::readId(request.value("before")) >= 0;
+    }
     case ENUM_MSG_TYPE_CREATE_FILE_REQUEST:
     case ENUM_MSG_TYPE_UPLOAD_FILE_INIT_REQUEST:
         return name(p->caData) && bodyText(p);
